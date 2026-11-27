@@ -15,6 +15,8 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
   (ac26f6f).
 - **SCSI sense** parsing and paper problems.
 - **Model table** with USB IDs for the iX500, iX500 EE and iX100.
+- **iX100 scan settings:** `VENS.iX100ParameterBlock` for automatic, colour, grey and black-and-white,
+  150/200/300 dpi and A4, matched byte for byte against the iOS app's blocks.
 - **iX100 over Wi-Fi, first look [HW]:** it answers `VENS` discovery and accepts mobile registrations
   (`Registrant.mobile`, password only); a capture of the ScanSnap iOS app gave its scan sequence. See
   `docs/PROTOCOL-iX100-WiFi.md`.
@@ -47,8 +49,9 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    References: Scan's `VENSNetwork.swift` and `FujitsuScanSnapWiFiDriver.swift` (MIT; adapt, removing
    UserDefaults and app types); open-scansnap's `discovery.py` and `scanner.py` (MIT) for discovery, the host
    ID and following a scanner to a new address. Its Wi-Fi transport is in its GPL SANE fork: facts only.
-3. **iX100 scan settings [HW]:** capture the iOS app with fixed resolutions and with colour, grey and
-   black-and-white, then write a `D4` builder for the iX100 and check it scans from a Mac.
+3. **First scan from a Mac [HW]:** drive the iX100 with `VENS.iX100ParameterBlock` (mobile registration,
+   `D8`, `D4`, `D5`, `E0`, read, `D6`, release) from a throwaway script or the CLI, and check each colour
+   mode returns the image the app got.
 4. **iOS spike [HW]:** run the client from an iPhone. The protocol side is answered (a mobile registration
    needs only the password, any stable MAC works); what is left is the local-network permission, broadcast
    discovery (the multicast entitlement, or a known address), and running in the foreground only.

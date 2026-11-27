@@ -37,12 +37,13 @@ extension VENS {
     /// The image index is one byte and counts sides: start a new job well before it wraps.
     public static let maximumSheetsPerJob = 120
 
-    /// Read a side's JPEG. `imageIndex` counts sides from 0 in a job: front `2n`, back `2n + 1`.
-    /// The reply ends with CHECK CONDITION and an end-of-medium sense once the image is complete;
-    /// each reply's data starts with an `ImageChunk` header.
-    public static func readImageCommand(back: Bool, imageIndex: Int) -> [UInt8] {
-        [0x28, 0, 0, 2, 0, back ? 0x80 : 0, UInt8(readLength >> 16 & 0xFF), UInt8(readLength >> 8 & 0xFF),
-         UInt8(readLength & 0xFF), 0, UInt8(imageIndex & 0xFF), 0]
+    /// Read a side's image. `imageIndex` counts sides from 0 in a job: on the iX500 front `2n`, back
+    /// `2n + 1`; on the single-sided iX100 one per page. The reply ends with CHECK CONDITION and an
+    /// end-of-medium sense once the image is complete; each reply's data starts with an `ImageChunk` header.
+    /// The iX100 app asks for `iX100ReadLength`.
+    public static func readImageCommand(back: Bool, imageIndex: Int, length: Int = readLength) -> [UInt8] {
+        [0x28, 0, 0, 2, 0, back ? 0x80 : 0, UInt8(length >> 16 & 0xFF), UInt8(length >> 8 & 0xFF),
+         UInt8(length & 0xFF), 0, UInt8(imageIndex & 0xFF), 0]
     }
 
     /// Image information after both sides of a sheet, 0x20 bytes back. Send the back's index.

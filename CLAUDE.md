@@ -72,9 +72,9 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
   status before telling the user the feeder is empty.
 - End the job (`D6`) on a new connection once the scan connection is closed; it is not answered before.
   It ends the job, not the reservation.
-- iX100: speaks the iX500's `VENS` Wi-Fi protocol, with its own scan settings (`D4` takes 128 bytes) and
-  sequence (no `E9`; `D6` answered on the scan connection); on automatic settings it picks resolution and
-  colour and crops itself. See docs/PROTOCOL-iX100-WiFi.md. USB ID `04C5:13F4` (from Scan's tests, not yet
+- iX100: speaks the iX500's `VENS` Wi-Fi protocol, with its own scan settings (`VENS.iX100ParameterBlock`:
+  80 bytes, or 128 with automatic colour) and sequence (no `E9`; `D6` answered on the scan connection). It
+  crops pages, picks resolution and colour on automatic settings, and sends black and white as a G4 TIFF. See docs/PROTOCOL-iX100-WiFi.md. USB ID `04C5:13F4` (from Scan's tests, not yet
   checked); SANE drives it like an iX500 without duplex.
 - **Capturing the iOS app:** with the iPhone on USB, `rvictl -s <UDID>` (UDID from `xcrun devicectl list
   devices`) adds interface `rvi0`; the user runs `sudo tcpdump -i rvi0 -s 0 -w captures/<name>.pcap` (BPF

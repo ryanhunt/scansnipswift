@@ -4,13 +4,13 @@ Observed by scansnipswift on 2026-11-27 with an iX100 on firmware `0V00`, on a h
 scanner joined the access point; its own access-point mode was not tried). Sources:
 
 - probes and registrations sent from a Mac;
-- one capture of the ScanSnap Home iOS app on an iPhone scanning a blank sheet with its default
-  settings, recorded with `rvictl` and `tcpdump`. The capture stays private; only the facts below were
-  taken from it.
+- two captures of the ScanSnap Home iOS app on an iPhone scanning blank sheets, recorded with `rvictl` and
+  `tcpdump`: one with the default (automatic) settings, one with each colour mode, each image quality and
+  A4 paper. The captures stay private; only the facts below were taken from them.
 
 Read [PROTOCOL-iX500-WiFi.md](PROTOCOL-iX500-WiFi.md) first: the iX100 speaks the same `VENS` protocol (ports,
 framing, discovery reply, password encoding, SCSI tunnel), and this file lists what was seen and what
-differs. Everything here is from one scanner and one session.
+differs. Everything here is from one scanner on one day.
 
 ## Discovery (UDP 52217)
 
@@ -90,14 +90,18 @@ The scan itself, on one connection:
 
 ```
 D8                    (CancelRead)
-D4 00 00 00 80 00     scan parameters, 128 bytes out (the iX500 takes 80)
+D4 00 00 00 LL 00     scan parameters: 128 bytes with automatic colour, else 80 (see below)
 D5 00 00 00 08 08     StartJob, 8 zero bytes out, 8 zero bytes back
 E0                    StartPaper
-28 00 00 02 00 00 04 00 00 00 00 00   read image 0, up to 0x40000 bytes: one whole JPEG, then CHECK CONDITION
+28 00 00 02 00 00 04 00 00 00 nn 00   read page nn, up to 0x40000 bytes: one whole image, then CHECK CONDITION
 03 00 00 00 12 00     REQUEST SENSE: key 0, end of medium and incorrect length, information = residual
 C2 …                  hardware status, polled about 100 times over 13 s (probably waiting for another sheet)
 D6                    EndJob, on the same connection, status 0
 ```
+
+For more pages in one job the app repeats `E0` and the read with the next page number (0, 1, …): the
+index counts pages, since the iX100 has one side. In the one two-page job seen, the app sent `D8` before
+`D6`.
 
 No `E9` (SetPreReadMode), no image-information read, and `D6` was answered on the scan connection (the iX500
 answers it only on a new one). The control-channel release (0x12) followed about 11 s later.
@@ -106,9 +110,10 @@ Hardware status (`C2`, 32 bytes): with a sheet inserted `00 00 80 00 00 01 20 00
 `00 00 00 80 00 01 20 00 …`. Byte 3 bit 7 is set once the sheet is gone, as on the iX500
 (`VENS.hopperHasPaper`). Bytes 16–18 were `c0 80 64` both times (0x64 = 100, probably the battery level).
 
-### Scan parameters (`D4`, 128 bytes)
+### Scan parameters (`D4`)
 
-The app's default (automatic) settings:
+`VENS.iX100ParameterBlock` builds these; its tests compare against all eight blocks the app sent. The app's
+default (automatic) settings:
 
 ```
   0  00 01 01 01 80 01 c1 c1 e0 c8 a0 80 80 00 00 81
@@ -121,22 +126,53 @@ The app's default (automatic) settings:
 112  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
-32 bytes of parameters, then two 48-byte window descriptors (window 0 at 32 and window 1 at 80, though the
-iX100 is single-sided). Read against the iX500's descriptor (`00 10 | dpi x | dpi y | 05 81 | quality | 00 |
-width | height | 04`): resolution 0 (automatic), `05 82` and `02 82` where the iX500 has `05 81`, quality
-0x0b, width 0x2880 (8.64 in) and height 0xA543 (35.3 in) in 1/1200 inch, then `04 00 00 00 01 01 01`. Other
-settings have not been captured yet.
+32 bytes of parameters, then 48-byte window descriptors: two (colour and grey, the scanner picking one per
+page) when the colour mode is automatic, else one. Changing one setting at a time in the app gave:
 
-### The image
+| Parameter byte | Automatic | Fixed |
+|---|---|---|
+| 2, 3, 5 | 1 (automatic page size) | 0 (A4) |
+| 7 | 0xC1 (automatic colour) | 0x80 (colour, grey or black and white) |
+| 10 | 0xA0 (automatic resolution) | 0x80 (150, 200 or 300 dpi) |
+| 15 | 0x81 (automatic page size) | 0 (A4) |
 
-One read returned the chunk header `00 00` (image index 0, chunk 0) and then a complete baseline JPEG: **one
-component (grey), 1644 × 2315 pixels at 200 dpi**, so about 8.2 × 11.6 in. With automatic settings the iX100
-picks the resolution and colour mode and crops the page itself, unlike the iX500, which always sends whole-area
-colour JPEGs. Whether the page needs rotating was not checked (the sheet was blank).
+Bytes 1, 4, 6, 8, 9, 11, 12 and 31 were `01`, `80`, `c1`, `e0`, `c8`, `80`, `80` and `30` in every block.
+
+| Window byte | JPEG (colour, grey) | Black and white |
+|---|---|---|
+| 0 | window ID (0, or 1 for the second window) | 0 |
+| 1 | 0x10 | 0x40 |
+| 2–5 | u16 dpi x, u16 dpi y: 0 for automatic, else 150, 200 or 300 | 0 (automatic) |
+| 6 | composition: 5 colour, 2 grey | 0 |
+| 7, 8 | 0x82, quality 0x0B | 0x03, 0 |
+| 10–17 | u32 width, u32 height in 1/1200 inch: `2880`/`a543` automatic, `26d0`/`36d0` A4 | same |
+| 18, 22–24 | 4, then `01 01 01` | same |
+| 25, 28 | 0, 0 | 1, 6 |
+
+The iX100's A4 width (0x26D0) is not the iX500's (0x26C1); the height matches. The app offers no 600 dpi
+("Excellent") for the iX100, and black and white was only captured with automatic resolution.
+
+### The images
+
+Each read returns the chunk header `00 00` (page number, chunk 0) and then one whole image:
+
+| Settings | Image |
+|---|---|
+| automatic | grey JPEG, 1644 × 2315 at 200 dpi |
+| colour | colour JPEG (3 components), 1664 × 2363 at 200 dpi |
+| grey | grey JPEG, 200 dpi (two pages) |
+| black and white | **TIFF**, little-endian, CCITT Group 4, 1 bit, white is zero, one strip, 3296 × 4616 at 400 dpi |
+| Normal / Better / Best | grey JPEG at 150 / 200 / 300 dpi (2464 × 3475 at 300) |
+| A4 | grey JPEG, 1648 × 2336 at 200 dpi: the full A4 area (8.24 × 11.68 in) |
+
+So the iX100 crops the page on the scanner when the size is automatic, and with automatic colour it sent grey
+for the blank sheets. The iX500, by contrast, always sends whole-area colour JPEGs. Whether pages need
+rotating was not checked (the sheets were blank).
 
 ## Open questions
 
-1. Other `D4` settings: fixed resolutions, colour, grey and black-and-white, and what each byte means.
+1. `D4` combinations not captured: fixed colour with a fixed resolution, black and white at a fixed
+   resolution, page sizes other than A4, and the meaning of the constant bytes.
 2. Whether the iX500 accepts a mobile registration (reserve mode 1) the same way.
 3. What −6 means exactly, and what the iX100 returns to a paired host.
 4. The discovery state word `0x00800007`, and the `SAV2` probe.

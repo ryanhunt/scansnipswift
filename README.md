@@ -17,13 +17,13 @@ top.
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
 | iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | planned | `VENS`: discovery and registration checked on hardware; scan sequence captured from the iOS app; client planned | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX100 | planned | `VENS`: discovery and registration checked on hardware; scan settings and sequence from the iOS app; client planned | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
 | Product | What it does |
 |---|---|
-| `ScanSnipProtocol` | Wire formats only, no I/O: the iX500 Wi-Fi protocol (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters), SCSI sense data, and the model table (`ScanSnapModel`). |
+| `ScanSnipProtocol` | Wire formats only, no I/O: the Wi-Fi protocol of the iX500 and iX100 (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters for each model), SCSI sense data, and the model table (`ScanSnapModel`). |
 
 Requires iOS 16 / macOS 13 or later and Swift 6.
 
@@ -81,8 +81,9 @@ Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX5
 - **Sessions expire.** Send a heartbeat probe (`VENS.heartbeatFlag`) at least every 10 seconds, or the
   scanner drops the session about 40 seconds after registering. `VENS.ControlCommand.release` ends it.
 - **The iX500 always scans colour, both sides.** Grey, single-sided output, cropping and blank-page removal
-  are done on the host. Pages arrive as JPEGs rotated by 180°. The iX100, on automatic settings, picks the
-  resolution and colour and crops the page itself.
+  are done on the host. Pages arrive as JPEGs rotated by 180°. The iX100 does more itself: it crops the page,
+  picks the resolution and colour on automatic settings (`VENS.IX100ScanParameters`), and sends black and
+  white as a Group 4 TIFF.
 - **One client at a time.** While ScanSnap Home or another computer holds the scanner, registration
   answers −4 (busy).
 
