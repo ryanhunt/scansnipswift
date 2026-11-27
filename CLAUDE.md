@@ -14,13 +14,17 @@ docs/PROTOCOL-iX500-WiFi.md before touching Wi-Fi code, and docs/ROADMAP.md for 
   `captures/`. Test data is synthetic, built in code.
 - **Hardware the maintainer owns: iX500 and iX100.** Do not claim support for other models. Anything not run
   on one of those two is "not yet checked on hardware", and docs must say so.
-- **Licences.** Upstreams are MIT: [holgerkrupp/Scan](https://github.com/holgerkrupp/Scan) (Swift) and
-  [elte0/scansnack](https://github.com/elte0/scansnack) (Python). Code adapted from either keeps the credit
-  in LICENSE and a comment naming the file and upstream commit.
-  - **Do not copy GPL code.** SANE's `fujitsu` backend and [bramheerink/scansnap](https://github.com/bramheerink/scansnap)
-    are GPL. Several of Scan's USB files are ports of SANE or copy its tables, so for Scan's
+- **Licences.** Upstreams are MIT: [holgerkrupp/Scan](https://github.com/holgerkrupp/Scan) (Swift),
+  [elte0/scansnack](https://github.com/elte0/scansnack) (Python) and
+  [thomergil/open-scansnap](https://github.com/thomergil/open-scansnap) (Python; its `AGENTS.md` holds
+  hardware-tested iX500 notes). Code adapted from any of them keeps the credit in LICENSE and a comment
+  naming the file and upstream commit; facts taken from them are credited in a comment or the docs.
+  - **Do not copy GPL code.** SANE's `fujitsu` backend, open-scansnap's SANE fork (branch `vens`, where its
+    Wi-Fi and USB transport live) and [bramheerink/scansnap](https://github.com/bramheerink/scansnap) are
+    GPL. Several of Scan's USB files are ports of SANE or copy its tables, so for Scan's
     `FujitsuSCSIOverUSB/` and `EpjitsuUSB/` folders take **facts only** (command bytes, offsets, quirks,
     observed behaviour) and write the code fresh.
+  - The package stays MIT with no copyleft code, so closed-source apps can use it.
   - **No third-party dependencies.** Scan's USB layer links Homebrew's libusb (LGPL) and needs sandbox
     exceptions; this package must use Apple frameworks (IOUSBHost on macOS, DriverKit on iPadOS).
 
@@ -40,24 +44,33 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
 | `Sources/ScanSnipProtocol/VENS*.swift` | iX500 Wi-Fi wire format, no I/O: framing, discovery and notices, registration, SCSI-tunnel commands and scan parameters |
 | `Sources/ScanSnipProtocol/SCSISense.swift` | Sense data and paper problems, shared by USB and Wi-Fi |
 | `Sources/ScanSnipProtocol/ScanSnapModel.swift` | The models this package knows: USB IDs, duplex, Wi-Fi protocol |
-| `docs/PROTOCOL-iX500-WiFi.md` | Copy of ScanSnack's iX500 protocol notes; our hardware findings go in its last section |
+| `docs/PROTOCOL-iX500-WiFi.md` | Copy of ScanSnack's iX500 protocol notes, then open-scansnap's findings; our hardware findings go in its last section |
 
 ## Scanner facts that cost time to learn (from the upstreams)
 
-- **iX500 Wi-Fi pairing is USB-only.** Only ScanSnap Home's Wi-Fi setup over USB writes the scanner's host
-  table. A client reuses the host ID from the discovery reply (offset 124); an unknown ID gets −7.
-- **The client MAC is the session identity.** The scan channel only answers the MAC that sent the last
-  registration. iOS does not expose the device's real MAC, so whether iOS can drive the iX500 over Wi-Fi is
-  an open question (spike it before building on it).
-- **The Wi-Fi command set is not the USB one.** Wi-Fi uses vendor CDBs `C2 D5 D8 E9 D4 E0 28 D6`. USB uses
-  Fujitsu's SCSI-over-USB set (SET WINDOW, OBJECT POSITION, READ, etc.) inside a 31-byte wrapper.
+- **iX500 Wi-Fi pairing is USB-only.** The scanner's host table (the computers allowed on Wi-Fi) is written
+  only over USB, with SEND DIAGNOSTIC commands (`CLR HOSTID ADATA`, then `REG HOSTID DATA `); pairing clears
+  the table, so it evicts every other computer. An unknown host ID gets −7. ScanSnap Home's host ID for a
+  Mac is its `en1` (else `en0`) MAC shifted left 16 bits (`VENS.hostID(mac:)`).
+- **Phones skip the host table.** The ScanSnap iOS app gets in with the scanner's password instead; how it
+  registers is not yet documented. Spike it before building iOS Wi-Fi support.
+- **The client MAC is the session identity, but need not be real.** A registration starts a reservation
+  keyed to the frame's MAC; other MACs get −4 until it ends. The scanner accepts any MAC, so send a stable,
+  locally administered one per host (macOS and iOS hide the real one).
+- **Reservations expire.** Without heartbeats (`VENS.heartbeatFlag`, at least every 10 s) the scanner drops
+  a reservation about 40 s after registration. Control command `0x12` releases it.
+- **The Wi-Fi command set is not the USB one.** Wi-Fi uses vendor CDBs `C2 D5 D8 E9 D4 E0 28 D6` and rejects
+  SET WINDOW, OBJECT POSITION, SCAN and the like (sense 5/20/00). USB uses Fujitsu's SCSI-over-USB set
+  (SET WINDOW, OBJECT POSITION, READ, etc.) inside a 31-byte wrapper.
 - The iX500 always scans colour and both sides; pages arrive as JPEGs rotated by 180°. The image index is one
   byte counting sides, so start a new job before 128 sheets (`VENS.maximumSheetsPerJob` is 120).
 - A feed that reports "feeder empty" (3/80/03) is also how a job ends: check the hopper bit in the hardware
   status before telling the user the feeder is empty.
-- Release (`D6`) is answered only after the scan connection is closed; send it on a new connection.
+- End the job (`D6`) on a new connection once the scan connection is closed; it is not answered before.
+  It ends the job, not the reservation.
 - iX100: USB ID `04C5:13F4` (from Scan's tests, not yet checked). Scan leaves it unclaimed on purpose (Ricoh
-  still supports it); SANE drives it like an iX500 without duplex. Its Wi-Fi protocol is undocumented.
+  still supports it); SANE drives it like an iX500 without duplex, and open-scansnap lists it as untested.
+  Its Wi-Fi protocol is undocumented.
 
 ## Conventions
 

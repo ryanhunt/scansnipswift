@@ -2,8 +2,9 @@
 Copied from ScanSnack (https://github.com/elte0/scansnack), docs/protocol-ix500.md at commit cf3464f,
 MIT licence, Copyright (c) 2026 elte0. Only the links were changed to point back to ScanSnack. Module
 paths such as `src/scansnap/...` refer to ScanSnack's Python code; this package's port is
-Sources/ScanSnipProtocol/VENS*.swift. Corrections found on hardware go in the "Notes from scansnipswift"
-section at the end, so the copy stays comparable with upstream.
+Sources/ScanSnipProtocol/VENS*.swift. The "Findings from open-scansnap" section near the end was added by
+scansnipswift and corrects parts of the copy; corrections found on hardware go in the "Notes from
+scansnipswift" section at the end, so the copy stays comparable with upstream.
 -->
 
 # ScanSnap iX500 Wi-Fi Protocol
@@ -245,6 +246,64 @@ product `ScanSnap iX500  `. The serial number is then only in the discovery name
 6. The one-byte image index after 128 sheets in one job (the client wraps it at 256).
 7. Discovery state 2: seen only while connected over USB; other meanings unknown.
 8. Whether renaming the scanner changes its discovery name (offset 40) and so hides the serial number.
+
+## Findings from open-scansnap
+
+Facts from [thomergil/open-scansnap](https://github.com/thomergil/open-scansnap) (MIT), summarised from its
+[`AGENTS.md`](https://github.com/thomergil/open-scansnap/blob/ac26f6f/AGENTS.md) and
+[`openscansnap/discovery.py`](https://github.com/thomergil/open-scansnap/blob/ac26f6f/openscansnap/discovery.py)
+at commit ac26f6f (2026-11-24). Its author tested them on an iX500 in November 2026; scansnipswift has not
+yet repeated them. Where they differ from the sections above, they are the newer observation.
+
+**Client MAC.** The scanner accepts any MAC in the frame header. A registration starts a reservation keyed
+to that MAC, and a registration from another MAC gets −4 while it lasts. The real MAC is therefore not
+needed: open-scansnap sends a locally administered MAC derived from the host's UUID, so two Macs never share
+a reservation. (macOS reports `02:00:00:00:00:00` through `getifaddrs`; SystemConfiguration's
+`SCNetworkInterfaceGetHardwareAddressString` gives the real address.)
+
+**Reservation lifetime.** The scanner ends a reservation about 40 s after it began, whatever commands it
+gets, unless heartbeats arrive (the discovery probe with 1 at offset 4, to UDP 52217). open-scansnap sends
+one at least every 10 s; scan-channel traffic alone does not keep the reservation.
+
+**Release.** Control command `0x12` on 53219, a bare 32-byte client frame with the MAC at 16, ends the
+reservation; only the holder's release counts (ScanSnap Home's `SsSvcPCWIFITelReleaseScanner`). `D6` on
+the scan channel ends the job, not the reservation.
+
+**Host ID.** ScanSnap Home computes a Mac's host ID as its hardware address shifted left 16 bits, taken from
+`en1` (else the first other `en1…` interface, else `en0`), and caches it in its preferences. The discovery
+reply's host IP and host ID (offsets 120 and 124) named the connected Mac while one was connected; what they
+show when none is connected has not been seen.
+
+**Phones.** The ScanSnap iOS app uses the scanner's password, not the host table. How it registers is not
+documented.
+
+**Discovery.** ScanSnap Home sends three 32-byte probes: `VENS` (flag 0x0010), `ssNR` (0x0100) and `V2ss`
+(0x1000, 1 at offset 4). The scanner ignores a probe without the client's IPv4 address at offset 8 but
+answers one with no MAC at offset 12. Nothing authenticates a reply.
+
+**Command names.** ScanSnap Home's `SsSvcPCWIFITel*` classes name the scan-channel commands: `D5` StartJob,
+`D8` CancelRead, `E9` SetPreReadMode, `D4` SetParams, `E0` StartPaper, `D6` EndJob, `E6` PowerOffTime,
+`E7` GetScannerInfo. scansnipswift's `VENS.Command` uses these names.
+
+**Rejected commands.** Over Wi-Fi the firmware answers sense 5/20/00 to TEST UNIT READY, SET/GET WINDOW,
+SCAN, OBJECT POSITION, SEND, MODE SELECT/SENSE, SEND/RECEIVE DIAGNOSTIC, SCANNER CONTROL and ENDORSER. It
+accepts INQUIRY (and VPD page 0xF0), REQUEST SENSE, GET HARDWARE STATUS, READ and the vendor commands above.
+
+**Wi-Fi setup and pairing over USB.** These work over USB only; ScanSnap Home's network calls for them do
+nothing. Each is a SEND DIAGNOSTIC (`1D 00 00 LL LL 00`) carrying a 16-byte ASCII command, then RECEIVE
+DIAGNOSTIC RESULTS (`1C`).
+
+- Pairing: `CLR HOSTID ADATA`, then `REG HOSTID DATA ` followed by the 8-byte host ID and 8 zero bytes.
+  Success when reply byte 0 & 0x7F is 0. Both ScanSnap Home and its Wi-Fi tool clear the table first, so
+  pairing removes every other computer. open-scansnap's 2026-11-22 notes had read the table on hardware
+  (`GET HOSTID LEN`, `GET HOSTID DATA`) but not yet written it.
+- Wi-Fi network: a `SETUP NET START ` … `SETUP NET END   ` session of `SETUP NET CMD   ` commands (opcode
+  6: networks the scanner sees; 7: the network it is set up for; 0x0A: setup version; 0x1006: SSID and
+  security; 0x1003: IP; 0x1002: name and password). The scanner's Wi-Fi switch must be on (else 0x81). The
+  passphrase is encoded like the registration password, with the iX500 key
+  `aQweSrTywuIoppAsFdfGuhjkslZxCcvBAnmqNweRstyuNiopaAsdPfghajKlPzxc`. Opcodes 6, 7 and 0x0A were read on
+  hardware; joining (0x1006) had not been sent as of those notes. The byte layouts are in open-scansnap's
+  GPL SANE fork: take facts only.
 
 ## Notes from scansnipswift
 

@@ -92,6 +92,11 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
 }
 
 @Suite struct RegistrationTests {
+    @Test func hostIDFromMAC() {
+        // 0x021122334455 << 16 = 0x0211223344550000, big-endian.
+        #expect(VENS.hostID(mac: mac) == [0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x00, 0x00])
+    }
+
     @Test func passwordEncoding() throws {
         // "2345": p(112)+'2'(50)+11 = 173, F(70)+'3'(51)+11 = 132, u(117)+'4'(52)+11 = 180, s(115)+'5'(53)+11 = 179.
         #expect(String(decoding: try VENS.encodedPassword("2345"), as: UTF8.self) == "173132180179")
@@ -154,13 +159,20 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
         #expect(frame[32] == 0xAA)
     }
 
+    @Test func releaseFrame() {
+        // Per open-scansnap: 32 bytes on 53219, command 0x12, MAC at 16.
+        let frame = VENS.clientFrame(command: VENS.ControlCommand.release.rawValue, mac: mac)
+        #expect(frame == [0, 0, 0, 0x20, 0x56, 0x45, 0x4E, 0x53, 0, 0, 0, 0x12, 0, 0, 0, 0]
+            + [0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
     @Test func scsiFrameLayout() {
         let window = VENS.windowBlock(.init())
-        let frame = VENS.scsiFrame(mac: mac, cdb: VENS.Command.setWindow, output: window)
+        let frame = VENS.scsiFrame(mac: mac, cdb: VENS.Command.setPreReadMode, output: window)
         #expect(frame.count == 32 + 16 + 16 + 32)
         #expect(Array(frame[8..<12]) == [0, 0, 0, 1])
         #expect(Array(frame[32..<48]) == [0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0])
-        #expect(Array(frame[48..<58]) == VENS.Command.setWindow)
+        #expect(Array(frame[48..<58]) == VENS.Command.setPreReadMode)
         #expect(Array(frame[58..<64]) == [0, 0, 0, 0, 0, 0])
         #expect(Array(frame[64...]) == window)
     }

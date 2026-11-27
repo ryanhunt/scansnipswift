@@ -1,25 +1,29 @@
 extension VENS {
     /// SCSI command blocks the iX500 accepts on the Wi-Fi scan channel. This is a vendor set of its own,
-    /// not the one used over USB.
+    /// not the one used over USB: the Wi-Fi firmware rejects SET WINDOW, OBJECT POSITION, SCAN and the other
+    /// standard scan commands (sense 5/20/00). Names follow ScanSnap Home's `SsSvcPCWIFITel*` classes, as
+    /// recorded by thomergil/open-scansnap.
     ///
-    /// A scan session runs: `hardwareStatus`, `openSession` (8 bytes out, 8 in), `startJob`,
-    /// `setWindow` (`windowBlock`), `setParameters` (`parameterBlock`), `hardwareStatus`, `requestSense`;
-    /// then per sheet `feed`, `readImage` front, `readImage` back, `imageInfo`, `hardwareStatus`;
-    /// finally `release` on a new connection once the scan connection is closed.
+    /// A scan session runs: `hardwareStatus`, `startJob` (8 bytes out, 8 in), `cancelRead`,
+    /// `setPreReadMode` (`windowBlock`), `setParameters` (`parameterBlock`), `hardwareStatus`,
+    /// `requestSense`; then per sheet `startPaper`, `readImage` front, `readImage` back, `imageInfo`,
+    /// `hardwareStatus`; finally `endJob` on a new connection once the scan connection is closed.
+    /// `endJob` ends the job, not the reservation: see `ControlCommand.release`.
     public enum Command {
         /// Hardware status, 0x20 bytes back. See `hopperHasPaper(_:)`.
         public static let hardwareStatus: [UInt8] = [0xC2, 0, 0, 0, 0, 0, 0, 0, 0x20, 0]
-        /// Open a session: 8 bytes out, 8 back.
-        public static let openSession: [UInt8] = [0xD5, 0, 0, 0, 8, 8]
-        public static let startJob: [UInt8] = [0xD8, 0, 0, 0, 0, 0]
-        /// Window: 32 bytes out (`windowBlock`).
-        public static let setWindow: [UInt8] = [0xE9, 0, 0, 0, 0, 0, 0, 0x20, 0, 0]
+        /// Start a job: 8 bytes out, 8 back.
+        public static let startJob: [UInt8] = [0xD5, 0, 0, 0, 8, 8]
+        /// Sent once before the scan settings.
+        public static let cancelRead: [UInt8] = [0xD8, 0, 0, 0, 0, 0]
+        /// Resolution and scan area: 32 bytes out (`windowBlock`).
+        public static let setPreReadMode: [UInt8] = [0xE9, 0, 0, 0, 0, 0, 0, 0x20, 0, 0]
         /// Scan parameters: 80 bytes out (`parameterBlock`).
         public static let setParameters: [UInt8] = [0xD4, 0, 0, 0, 0x50, 0]
         /// Feed a sheet. CHECK CONDITION with sense 3/80/03 means the feeder is empty (or the job ended).
-        public static let feed: [UInt8] = [0xE0, 0, 0, 0, 0, 0]
-        /// Release the scanner; send it on a new connection after closing the scan connection.
-        public static let release: [UInt8] = [0xD6, 0, 0, 0, 0, 0]
+        public static let startPaper: [UInt8] = [0xE0, 0, 0, 0, 0, 0]
+        /// End the job; send it on a new connection after closing the scan connection.
+        public static let endJob: [UInt8] = [0xD6, 0, 0, 0, 0, 0]
         /// REQUEST SENSE, 18 bytes back. See `SCSISense`.
         public static let requestSense: [UInt8] = [0x03, 0, 0, 0, 0x12, 0]
         /// INQUIRY, 96 bytes back. The firmware revision follows the product name.
@@ -69,7 +73,7 @@ extension VENS {
     }
 
     /// Whether the feeder holds paper, from a `Command.hardwareStatus` reply (byte 3, bit 7 clear).
-    /// After `feed` reports an empty feeder, this tells the end of a job from a really empty feeder.
+    /// After `startPaper` reports an empty feeder, this tells the end of a job from a really empty feeder.
     public static func hopperHasPaper(_ status: [UInt8]) -> Bool? {
         status.count > 3 ? status[3] & 0x80 == 0 : nil
     }
@@ -116,7 +120,7 @@ extension VENS {
         public var isValid: Bool { Self.resolutions.contains(resolution) }
     }
 
-    /// `setWindow` data: `u16 dpi x | u16 dpi y | u32 width | u32 height | 05`, padded to 32 bytes.
+    /// `setPreReadMode` data:`u16 dpi x | u16 dpi y | u32 width | u32 height | 05`, padded to 32 bytes.
     public static func windowBlock(_ parameters: ScanParameters) -> [UInt8] {
         precondition(parameters.isValid, "Unsupported resolution \(parameters.resolution)")
         let dpi = UInt16(parameters.resolution)

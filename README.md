@@ -15,7 +15,7 @@ top.
 
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
-| iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Wi-Fi needs a one-time setup with ScanSnap Home over USB. |
+| iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Wi-Fi needs a one-time pairing over USB (ScanSnap Home does it). |
 | iX100 | planned | protocol undocumented | One sheet at a time, single-sided, battery. No open-source project drives it yet. |
 
 ## Packages
@@ -45,30 +45,34 @@ The protocol layer builds and parses packets. It does not open sockets: the netw
 ```swift
 import ScanSnipProtocol
 
-// A UDP discovery probe for port 52217, and its reply.
-let probe = VENS.probe(hostIP: myIPv4, hostMAC: myMAC, replyPort: replyPort)
+// A UDP discovery probe for port 52217, and its reply. `clientMAC` is any stable, locally administered
+// MAC: the scanner keys the session to it and does not check it against the real one.
+let probe = VENS.probe(hostIP: myIPv4, hostMAC: clientMAC, replyPort: replyPort)
 if let scanner = VENS.Announcement(replyBytes), scanner.knownModel == .iX500 {
     print(scanner.name, scanner.ipAddress, scanner.hasRegisteredHost)
 
-    // Register for a session on TCP 53219, reusing the host ID ScanSnap Home set up.
+    // Register on TCP 53219 under the host ID ScanSnap Home paired this Mac with (from en1's MAC).
     let body = try VENS.registrationBody(
         interfaceVersion: scanner.interfaceVersion, hostIP: myIPv4,
-        password: scanner.factoryPassword ?? userPassword, hostID: scanner.registeredHostID,
+        password: scanner.factoryPassword ?? userPassword, hostID: VENS.hostID(mac: en1MAC),
         date: .now, timeZone: .current)
-    let frame = VENS.clientFrame(command: VENS.ControlCommand.register.rawValue, mac: myMAC, body: body)
+    let frame = VENS.clientFrame(command: VENS.ControlCommand.register.rawValue, mac: clientMAC, body: body)
 }
 
 // Scan settings for the SCSI tunnel on TCP 53218.
 let settings = VENS.ScanParameters(resolution: 300, pageSize: .automatic, detectsDoubleFeed: true)
-let setParameters = VENS.scsiFrame(mac: myMAC, cdb: VENS.Command.setParameters,
+let setParameters = VENS.scsiFrame(mac: clientMAC, cdb: VENS.Command.setParameters,
                                    output: VENS.parameterBlock(settings))
 ```
 
 Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX500-WiFi.md)):
 
-- **Pairing happens over USB.** Only ScanSnap Home's Wi-Fi setup, over USB, adds a computer to the iX500's
-  host table. A client reuses the host ID the scanner announces, and sends the MAC of the interface that
-  reaches the scanner.
+- **Pairing happens over USB.** Only USB commands add a computer to the iX500's host table, and pairing
+  removes every other computer. ScanSnap Home's host ID for a Mac is its `en1` MAC shifted left 16 bits
+  (`VENS.hostID(mac:)`). The ScanSnap iOS app skips the table and uses the scanner's password; how is not
+  yet documented.
+- **Sessions expire.** Send a heartbeat probe (`VENS.heartbeatFlag`) at least every 10 seconds, or the
+  scanner drops the session about 40 seconds after registering. `VENS.ControlCommand.release` ends it.
 - **The iX500 always scans colour, both sides.** Grey, single-sided output, cropping and blank-page removal
   are done on the host. Pages arrive as JPEGs rotated by 180°.
 - **One client at a time.** While ScanSnap Home or another computer holds the scanner, registration
@@ -89,7 +93,8 @@ documentation addresses (192.0.2.x), locally administered MACs and made-up seria
 
 ## Credits and licence
 
-MIT, see [LICENSE](LICENSE). This package stands on two MIT-licensed projects:
+MIT, see [LICENSE](LICENSE). It contains no GPL or LGPL code, so closed-source apps can use it; ship
+the LICENSE text with your app. This package stands on three MIT-licensed projects:
 
 - **[holgerkrupp/Scan](https://github.com/holgerkrupp/Scan)** by Holger Krupp: a native macOS ScanSnap app in
   Swift. `ScanSnipProtocol`'s Wi-Fi code is adapted from its `VENSProtocol.swift` and tests, and its USB
@@ -97,5 +102,9 @@ MIT, see [LICENSE](LICENSE). This package stands on two MIT-licensed projects:
 - **[elte0/scansnack](https://github.com/elte0/scansnack)** by elte0: a Python client and eSCL bridge for
   ScanSnap scanners over Wi-Fi, which worked out the iX500 and iX1500 network protocols.
   [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX500-WiFi.md) is copied from it.
+- **[thomergil/open-scansnap](https://github.com/thomergil/open-scansnap)** by Thomer Gil: a macOS menu-bar
+  app that scans from the iX500 over Wi-Fi and USB. Its hardware-tested notes on host IDs, sessions, pairing
+  and Wi-Fi setup over USB are summarised in the protocol notes, and `VENS.Command` uses the command names
+  it recorded.
 
 Not affiliated with or endorsed by PFU, Fujitsu or Ricoh; ScanSnap is a trademark of PFU Limited.
