@@ -4,7 +4,7 @@ import ScanSnipProtocol
 
 /// An in-memory iX100 that behaves as the real one did on 2026-11-27: a greeting on every connection,
 /// control commands only after registering, mobile registration with the factory password, a new sheet
-/// touching the slot for a few reads before it is loaded, blank sheets removed (an empty image), and a
+/// touching the slot for a few reads before it is loaded, blank sheets (an empty sheet image) read back with no image, and a
 /// release mid-job leaving it busy until reset. A sheet fed before it is loaded scans nothing here; the real
 /// iX100's read then did not answer within 15 s.
 actor SimulatedScanner {

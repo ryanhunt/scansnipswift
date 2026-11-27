@@ -37,7 +37,11 @@ swift build --package-path Tools/scansnip       # the hardware-check tool
 Tools/scansnip/.build/debug/scansnip scan <scanner IP> --trace [--dump <dir>]
 ```
 
-`--trace` prints each command and the shape of each reply; `--dump` also saves raw image reads. Both stay
+`--trace` prints each command and the shape of each reply; `--dump` also saves raw image reads. For the demo
+app: `cd Examples/ScanSnipDemo && xcodegen generate`, build with `-allowProvisioningUpdates`, install with
+`xcrun devicectl device install app`, launch with `... process launch <bundle id> -- -scannerHost <ip>
+-autoScan YES`, and read its log with `devicectl device copy from --domain-type appDataContainer --source
+Documents/scansnip-log.txt`. Both stay
 local: scans and dumps can hold documents, so keep them out of the repo.
 
 ## Layout
@@ -51,6 +55,7 @@ local: scans and dumps can hold documents, so keep them out of the repo.
 | `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery, the `WiFiScanner` actor |
 | `Tests/ScanSnipScannerTests/SimulatedScanner.swift` | An in-memory iX100 that keeps the rules learned on hardware; extend it when a new one is found |
 | `Tools/scansnip/` | A separate package: the command-line tool for checking against real scanners |
+| `Examples/ScanSnipDemo/` | A SwiftUI demo app (XcodeGen `project.yml`); team and bundle ID only in the git-ignored `Config/Local.xcconfig` |
 | `docs/PROTOCOL-iX500-WiFi.md` | Copy of ScanSnack's iX500 protocol notes, then open-scansnap's findings; our hardware findings go in its last section |
 | `docs/PROTOCOL-iX100-WiFi.md` | Our own iX100 notes from hardware and an iOS-app capture |
 
@@ -68,8 +73,9 @@ local: scans and dumps can hold documents, so keep them out of the repo.
   power-cycled.
 - **iX100: feed only a loaded sheet.** `C2` byte 3 bit 7 clears when a sheet reaches the slot; byte 2 bit 7
   sets once it is loaded. Feed on byte 2 (`VENS.iX100SheetReady`), as the iOS app does.
-- **iX100: blank sheets are removed.** A blank sheet's read is just the chunk header and end of medium, in
-  automatic and colour modes. It looked like a protocol bug for several rounds: test with marked sheets.
+- **iX100: some blank sheets come back with no image** (a read of just the chunk header and end of medium),
+  probably blank-page removal, though one nearly blank sheet scanned. It looked like a protocol bug for
+  several rounds: test with marked sheets, and do not read an empty page as a client bug.
 - **iX100: big pages come in several reads,** each after the first starting with 43 bytes to drop
   (`VENS.iX100ContinuationPrefixLength`); the chunk number stays 0.
 - **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second

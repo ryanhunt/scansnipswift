@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig (git-ignored) and fill in, to run the demo on a device.
+// Use a bundle ID under your own team's prefix; do not sign with a Personal Team.
+DEVELOPMENT_TEAM = ABCDE12345
+SCANSNIP_DEMO_BUNDLE_ID = com.example.scansnipdemo

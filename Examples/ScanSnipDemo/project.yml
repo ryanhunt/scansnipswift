@@ -1,0 +1,37 @@
+name: ScanSnipDemo
+options:
+  deploymentTarget:
+    iOS: "16.0"
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+packages:
+  ScanSnip:
+    path: ../..
+targets:
+  ScanSnipDemo:
+    type: application
+    platform: iOS
+    sources: [ScanSnipDemo]
+    dependencies:
+      - package: ScanSnip
+        product: ScanSnipScanner
+      - package: ScanSnip
+        product: ScanSnipProtocol
+    info:
+      path: ScanSnipDemo/Info.plist
+      properties:
+        CFBundleDisplayName: ScanSnip Demo
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSLocalNetworkUsageDescription: ScanSnip Demo talks to your ScanSnap scanner on your local network.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(SCANSNIP_DEMO_BUNDLE_ID)
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO

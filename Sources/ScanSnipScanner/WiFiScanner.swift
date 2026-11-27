@@ -66,7 +66,8 @@ public actor WiFiScanner {
     private let scanner: DiscoveredScanner
     private let configuration: Configuration
     private var scanning = false
-    /// Sheets the scanner removed as blank during the last scan (they produce no page).
+    /// Sheets whose read came back with no image during the last scan (seen with blank sheets; they produce
+    /// no page).
     public private(set) var blankPagesSkipped = 0
     private var scanStream: (any VENSStream)?
     private var jobOpen = false
@@ -228,8 +229,8 @@ public actor WiFiScanner {
     }
 
     /// One short job per sheet, as the iOS app does for a single sheet: wait until a sheet is loaded, then
-    /// start the job, feed, read and end it at once. A sheet the scanner removes as blank comes back with no
-    /// image; it is counted in `blankPagesSkipped` and not yielded.
+    /// start the job, feed, read and end it at once. A sheet that comes back with no image (seen with blank
+    /// sheets) is counted in `blankPagesSkipped` and not yielded.
     private func scanPages(_ parameters: VENS.IX100ScanParameters,
                            _ continuation: AsyncThrowingStream<Page, Error>.Continuation) async throws {
         let block = VENS.iX100ParameterBlock(parameters)
@@ -273,8 +274,8 @@ public actor WiFiScanner {
             scanStream = nil
             sheetsFed += 1
             if image.isEmpty {
-                // The iX100 removes blank sheets (checked in colour and automatic modes, 2026-11-27): the read
-                // ends at once with no image.
+                // Some blank sheets come back with no image, in colour and automatic modes (2026-11-27);
+                // probably the scanner's blank-page removal, though one nearly blank sheet scanned.
                 blankPagesSkipped += 1
             } else {
                 continuation.yield(Page(index: index, format: parameters.returnsTIFF ? .tiff : .jpeg,

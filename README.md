@@ -8,8 +8,8 @@ This is a library, not an app: it has no UI. Apps add it as a Swift package and 
 top.
 
 > **Status: early.** On hardware so far: the iX100 over Wi-Fi, scanning through `ScanSnipScanner` from a Mac
-> (automatic, colour, grey and black-and-white pages, and pages larger than one read). Not yet run from an
-> iPhone or iPad, and the client does not drive the iX500 yet. The maintainer tests with a
+> (automatic, colour, grey and black-and-white pages, and pages larger than one read) and from an iPhone
+> (the demo app). Not yet run on an iPad, and the client does not drive the iX500 yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -18,7 +18,7 @@ top.
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
 | iX500 (and iX500 EE) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | planned | scans with `WiFiScanner` (checked from a Mac) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX100 | planned | scans with `WiFiScanner` (checked from a Mac and an iPhone) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
@@ -53,7 +53,7 @@ let client = WiFiScanner(transport: transport, scanner: scanner,
 for try await page in await client.scan(.init(colorMode: .automatic)) {
     try page.data.write(to: folder.appendingPathComponent("page-\(page.index).\(page.format == .tiff ? "tif" : "jpg")"))
 }
-print("blank sheets removed by the scanner:", await client.blankPagesSkipped)
+print("blank sheets skipped:", await client.blankPagesSkipped)
 ```
 
 `scan` waits for a sheet, scans each one put in until none comes within `nextSheetTimeout`, and always ends
@@ -109,8 +109,8 @@ Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX5
   white as a Group 4 TIFF.
 - **One client at a time.** While ScanSnap Home or another computer holds the scanner, registration
   answers −4 (busy).
-- **The iX100 removes blank sheets.** A sheet with nothing on it produces no page (`blankPagesSkipped`), so
-  test with sheets that have some marking on them.
+- **Blank sheets may produce no page.** Some blank sheets come back from the iX100 with no image (probably its
+  blank-page removal); `WiFiScanner` counts them in `blankPagesSkipped`. Test with sheets that have a mark.
 - **Feed only a loaded sheet.** The iX100's hardware status shows a sheet at the slot (byte 3) before it is
   loaded (byte 2, `VENS.iX100SheetReady`); `WiFiScanner` waits for the second, as the iOS app does.
 
@@ -139,6 +139,14 @@ Tools/scansnip/.build/debug/scansnip scan 192.0.2.20 --color auto --out ~/Deskto
 ```
 
 `--trace` prints every command and the shape of each reply (never the password or image data).
+
+`Examples/ScanSnipDemo` is a small SwiftUI app on `ScanSnipScanner` for iPhone and iPad. Generate its project
+with [XcodeGen](https://github.com/yonaskolb/XcodeGen), and to run it on a device put your team and bundle ID
+in `Config/Local.xcconfig` (see `Config/Local.xcconfig.example`):
+
+```bash
+cd Examples/ScanSnipDemo && xcodegen generate && open ScanSnipDemo.xcodeproj
+```
 
 ## Credits and licence
 
