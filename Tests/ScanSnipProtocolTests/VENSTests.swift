@@ -112,9 +112,11 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
         let date = Date(timeIntervalSince1970: 1_794_000_000)  // 2026-11-06 21:20:00 UTC
         let zone = try #require(TimeZone(secondsFromGMT: 3600))
         let body = try VENS.registrationBody(
-            interfaceVersion: 6, hostIP: hostIP, password: "2345", hostID: hostID, date: date, timeZone: zone)
+            interfaceVersion: 6, hostIP: hostIP, password: "2345", registrant: .pairedHost(hostID: hostID), date: date,
+            timeZone: zone)
         #expect(body.count == 96)
         #expect(Array(body[0..<4]) == [0, 6, 0x1E, 0])
+        #expect(Array(body[4..<8]) == [0, 0, 0, 0])  // reserve mode 0: a paired host
         #expect(Array(body[8..<12]) == [0, 0, 0, 1])
         #expect(Array(body[12..<16]) == hostIP)
         #expect(Array(body[16..<20]) == VENS.bigEndian(UInt32(55265)))
@@ -125,10 +127,23 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
         #expect(Array(body[84..<88]) == VENS.bigEndian(Int32(-3600)))
     }
 
+    @Test func mobileRegistration() throws {
+        // As the ScanSnap iOS app registers with an iX100: reserve mode 1 and no host ID (UTC+11 here).
+        let zone = try #require(TimeZone(secondsFromGMT: 39600))
+        let body = try VENS.registrationBody(
+            interfaceVersion: 6, hostIP: hostIP, password: "2345", registrant: .mobile, date: Date(), timeZone: zone)
+        #expect(body.count == 96)
+        #expect(Array(body[4..<8]) == [0, 0, 0, 1])
+        #expect(Array(body[8..<12]) == [0, 0, 0, 1])
+        #expect(Array(body[76..<84]) == [UInt8](repeating: 0, count: 8))
+        #expect(Array(body[84..<88]) == [0xFF, 0xFF, 0x65, 0x50])  // -39600, as the app sent it
+    }
+
     @Test func oldInterfaceHasNoTimeZone() throws {
         let zone = try #require(TimeZone(secondsFromGMT: 36000))
         let body = try VENS.registrationBody(
-            interfaceVersion: 3, hostIP: hostIP, password: "2345", hostID: hostID, date: Date(), timeZone: zone)
+            interfaceVersion: 3, hostIP: hostIP, password: "2345", registrant: .pairedHost(hostID: hostID),
+            date: Date(), timeZone: zone)
         #expect(Array(body[84..<88]) == [0, 0, 0, 0])
     }
 
@@ -140,7 +155,8 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
         #expect(try VENS.RegistrationStatus(reply: reply(-3)) == .wrongPassword)
         #expect(try VENS.RegistrationStatus(reply: reply(-4)) == .busy)
         #expect(try VENS.RegistrationStatus(reply: reply(-7)) == .unknownHost)
-        #expect(try VENS.RegistrationStatus(reply: reply(-6)) == .other(-6))
+        #expect(try VENS.RegistrationStatus(reply: reply(-6)) == .notPaired)
+        #expect(try VENS.RegistrationStatus(reply: reply(-5)) == .other(-5))
         #expect(throws: VENSError.truncated(expected: 20, actual: 12)) {
             try VENS.RegistrationStatus(reply: Array(reply(0).prefix(12)))
         }

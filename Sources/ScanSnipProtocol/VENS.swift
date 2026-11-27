@@ -31,6 +31,10 @@ public enum VENS {
     public static let maximumFrameLength = 0x40_0000
 
     /// Control-channel commands (the `command` field of a client frame).
+    ///
+    /// Each command gets its own connection to `controlPort`. The scanner sends a 16-byte greeting on
+    /// connect; send the command as soon as it arrives. An iX100 left waiting about a second closes the
+    /// connection without answering.
     public enum ControlCommand: UInt32, Sendable {
         /// Run a SCSI command on the scan channel.
         case scsi = 0x01
@@ -42,7 +46,8 @@ public enum VENS {
         case release = 0x12
         /// Read the scanner's name (64 bytes).
         case name = 0x13
-        /// Read a status word (3 observed on mains power; meaning unknown).
+        /// Read a status word (3 observed on mains power; meaning unknown). The iX100 follows it with
+        /// `02 00 80 64` (the last byte is probably the battery level in percent; unconfirmed).
         case status = 0x30
     }
 
