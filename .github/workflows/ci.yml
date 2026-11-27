@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+      - name: Build and test (macOS)
+        run: swift test
+      - name: Build (iOS Simulator)
+        run: xcodebuild -scheme ScanSnip -destination 'generic/platform=iOS Simulator' build
