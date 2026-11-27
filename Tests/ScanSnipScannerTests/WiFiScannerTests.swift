@@ -104,9 +104,9 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
         #expect(await scanner.stuck == false)
     }
 
-    @Test func blankSheetsTheScannerRemovesAreSkipped() async throws {
-        // The iX100 removes blank sheets: the read ends at once with no image. They are counted, not yielded,
-        // and the pages that follow keep counting from where they were.
+    @Test func sheetsThatComeBackEmptyAreSkipped() async throws {
+        // Some blank sheets come back from the iX100 with no image. They are counted, not yielded, and the
+        // pages that follow keep counting from where they were.
         let scanner = SimulatedScanner(sheets: [jpeg, [], otherJPEG])
         let wifi = try await client(scanner)
         let pages = try await collect(wifi.scan())

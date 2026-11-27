@@ -104,9 +104,11 @@ do {
             return count
         }
         signal(SIGINT, SIG_IGN)
+        let interrupted = Counter()
         let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         interrupt.setEventHandler {
             print("stopping: ending the job and releasing the scanner")
+            _ = interrupted.next()
             scanTask.cancel()
         }
         interrupt.resume()
@@ -115,8 +117,9 @@ do {
         interrupt.cancel()
         let count = try result.get()
         let skipped = await client.blankPagesSkipped
-        print("done: \(count) page\(count == 1 ? "" : "s")"
-              + (skipped > 0 ? ", \(skipped) blank sheet\(skipped == 1 ? "" : "s") removed by the scanner" : ""))
+        let verb = interrupted.next() > 1 ? "stopped" : "done"
+        print("\(verb): \(count) page\(count == 1 ? "" : "s")"
+              + (skipped > 0 ? ", \(skipped) blank sheet\(skipped == 1 ? "" : "s") skipped (no image came back)" : ""))
 
     default:
         print(usage)

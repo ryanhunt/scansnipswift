@@ -19,8 +19,11 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
   150/200/300 dpi and A4, matched byte for byte against the iOS app's blocks.
 - **Wi-Fi client for the iX100 [HW]** (`ScanSnipScanner`): Network.framework transport, discovery at a known
   address, `WiFiScanner` (mobile registration, heartbeats, one job per loaded sheet, multi-read pages,
-  removed blank sheets, always ending the job and releasing), a simulated iX100 for tests, and the
+  sheets that come back empty, always ending the job and releasing), a simulated iX100 for tests, and the
   `scansnip` tool. Checked from a Mac on 2026-11-27.
+- **iOS spike [HW]:** `Examples/ScanSnipDemo`, a SwiftUI app on `ScanSnipScanner`, found the iX100 at its
+  address and scanned a page on an iPhone 15 Pro Max (iOS 27.2.1, 2026-11-27), with local-network access
+  allowed: no pairing, no real MAC, no entitlement needed for a known address.
 - **First scans from a Mac [HW]:** automatic, colour, grey and black-and-white pages from the iX100 through
   `ScanSnipProtocol` alone (a throwaway tool), each matching the iOS app's image.
 - **iX100 over Wi-Fi, first look [HW]:** it answers `VENS` discovery and accepts mobile registrations
@@ -39,11 +42,11 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
 2. **Wi-Fi client, the rest:** the iX500's scan sequence (two sides, `E9`, image information, `D6` on a new
    connection) once it is back on the desk; broadcast discovery (BSD sockets; on iOS the multicast
    entitlement); following a scanner to a new address; registering as a paired host (`VENS.hostID`) for
-   Macs paired by ScanSnap Home; the `D4` byte that turns blank-page removal off (capture the app with it
-   off); a `status` command in `scansnip`.
-3. **iOS spike [HW]:** run the client from an iPhone. The protocol side is answered (a mobile registration
-   needs only the password, any stable MAC works); what is left is the local-network permission, broadcast
-   discovery (the multicast entitlement, or a known address), and running in the foreground only.
+   Macs paired by ScanSnap Home; whether a `D4` byte controls the empty blank-sheet reads (capture the app
+   with blank-page removal off); a `status` command in `scansnip`.
+3. **iOS, the rest:** finding the scanner without typing its address (the iX100 advertises no Bonjour
+   service, so broadcast discovery with the multicast entitlement, or remembering the last address);
+   scanning while the app is in the background (not tried); an iPad run; CI building the demo app.
 4. **USB transport on macOS** (IOUSBHost, no libusb) **[HW]**: the 31-byte command wrapper (byte 0 `0x43`,
    CDB at 0x13), 13-byte status, REQUEST SENSE on a non-zero status, and the iX500 command sequence (SET
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's

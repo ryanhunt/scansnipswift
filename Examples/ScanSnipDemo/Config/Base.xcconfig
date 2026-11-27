@@ -1,0 +1,5 @@
+// Shared settings. Put your team and bundle ID in Local.xcconfig (git-ignored); see Local.xcconfig.example.
+SCANSNIP_DEMO_BUNDLE_ID = io.github.scansnipswift.demo
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

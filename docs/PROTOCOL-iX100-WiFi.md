@@ -196,6 +196,14 @@ sense. Lessons:
   before the scanner had loaded it; see "Sheets, blank pages and large pages" below.
 - The status word (0x30) read 2 right after power-on and 3 after a scan.
 
+## From an iPhone
+
+On 2026-11-27 the demo app (`Examples/ScanSnipDemo`) ran the same `ScanSnipScanner` code on an iPhone 15 Pro
+Max with iOS 27.2.1: it found the iX100 at its address 2.6 s after launch, registered as a mobile client,
+scanned a page (a 61 KB grey JPEG at 200 dpi), ended the job and released the scanner. The app declares
+`NSLocalNetworkUsageDescription` and needs no entitlement for a scanner at a known address. Broadcast
+discovery and background scanning were not tried.
+
 ## Sheets, blank pages and large pages
 
 Found while building `ScanSnipScanner` (2026-11-27, firmware 0V00), with the `scansnip` tool's `--trace`
@@ -206,10 +214,12 @@ and the iOS-app captures.
 fed only on `00 00 80 00`, at once (within 0.1 s), and never on `00 00 00 00`. `VENS.iX100SheetReady` reads
 byte 2. The client waits for it, then starts a job and feeds straight away, one job per sheet.
 
-**The scanner removes blank sheets.** With the app's settings, a sheet with nothing on it comes back as a read
-of only the chunk header (`00 00`) and end-of-medium sense, residual `0x3FFD5`, in automatic and in fixed
-colour mode alike. Sheets with any print, even faint show-through from the back, scan. Which `D4` byte turns
-this off is not known yet. `WiFiScanner` counts such sheets in `blankPagesSkipped` and yields no page.
+**Some blank sheets come back with no image.** With the app's settings, several sheets with nothing on them
+came back as a read of only the chunk header (`00 00`) and end-of-medium sense, residual `0x3FFD5`, in
+automatic and in fixed colour mode. Every sheet with print (even faint show-through) scanned, but so did one
+nearly blank sheet from the iPhone demo (a white page with a faint edge shadow). So this is probably the
+scanner's blank-page removal with a threshold, but that is not proven, nor which `D4` byte controls it.
+`WiFiScanner` counts such sheets in `blankPagesSkipped` and yields no page.
 
 **A page larger than one read (0x40000 bytes) comes in several.** The first read answers GOOD with a full
 buffer; the last answers CHECK CONDITION with end of medium. Every read after the first starts with the
