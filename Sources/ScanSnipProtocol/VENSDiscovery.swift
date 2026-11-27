@@ -70,8 +70,10 @@ extension VENS {
             return String(serial.suffix(4))
         }
 
-        /// Whether a host ID is on record. Without one, ScanSnap Home has to set up Wi-Fi over USB first.
-        public var hasRegisteredHost: Bool { registeredHostID.contains { $0 != 0 } }
+        /// Whether a host ID is on record. All zeros and all `FF` (what an idle iX100 sends) both mean none.
+        public var hasRegisteredHost: Bool {
+            registeredHostID.contains { $0 != 0 } && registeredHostID.contains { $0 != 0xFF }
+        }
 
         /// The model, if it is one this package knows.
         public var knownModel: ScanSnapModel? { ScanSnapModel.matching(announcedModel: model) }

@@ -1,15 +1,15 @@
 # scansnipswift
 
-Open-source Swift packages for Fujitsu/Ricoh **ScanSnap** document scanners on iOS, iPadOS and macOS. Today it
-has the Wi-Fi protocol the iX500 and iX100 share as pure, tested wire formats. A Wi-Fi client and a USB
-transport are next.
+Open-source Swift packages for Fujitsu/Ricoh **ScanSnap** document scanners on iOS, iPadOS and macOS. It has the
+Wi-Fi protocol the iX500 and iX100 share, as pure tested wire formats, and a Wi-Fi client that scans from the
+iX100. A USB transport is next.
 
 This is a library, not an app: it has no UI. Apps add it as a Swift package and build their own interface on
 top.
 
-> **Status: early.** On hardware so far: iX100 discovery, registration and scanning over Wi-Fi. A throwaway
-> Mac tool built on `ScanSnipProtocol` scanned automatic, colour, grey and black-and-white pages that match
-> the ScanSnap iOS app's. There is no ready-made network client yet. The maintainer tests with a
+> **Status: early.** On hardware so far: the iX100 over Wi-Fi, scanning through `ScanSnipScanner` from a Mac
+> (automatic, colour, grey and black-and-white pages, and pages larger than one read). Not yet run from an
+> iPhone or iPad, and the client does not drive the iX500 yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -17,14 +17,15 @@ top.
 
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
-| iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | planned | `VENS`: discovery and registration checked on hardware; scan settings and sequence from the iOS app; client planned | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX500 (and iX500 EE) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
+| iX100 | planned | scans with `WiFiScanner` (checked from a Mac) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
 | Product | What it does |
 |---|---|
 | `ScanSnipProtocol` | Wire formats only, no I/O: the Wi-Fi protocol of the iX500 and iX100 (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters for each model), SCSI sense data, and the model table (`ScanSnapModel`). |
+| `ScanSnipScanner` | Talks to a scanner over Wi-Fi with Network.framework: `ScannerDiscovery` finds it at an address, `WiFiScanner` scans pages. iX100 only for now. |
 
 Requires iOS 16 / macOS 13 or later and Swift 6.
 
@@ -35,14 +36,32 @@ dependencies: [
     .package(url: "https://github.com/ryanhunt/scansnipswift.git", branch: "main"),
 ],
 targets: [
-    .target(name: "MyApp", dependencies: [.product(name: "ScanSnipProtocol", package: "scansnipswift")]),
+    .target(name: "MyApp", dependencies: [.product(name: "ScanSnipScanner", package: "scansnipswift")]),
 ]
 ```
 
 ## Usage
 
-The protocol layer builds and parses packets. It does not open sockets: the network client comes next
-(see the roadmap).
+```swift
+import ScanSnipProtocol
+import ScanSnipScanner
+
+let transport = NetworkTransport(host: "192.0.2.20")           // the scanner's address
+let scanner = try await ScannerDiscovery.find(using: transport)  // waits for a sleeping scanner to answer
+let client = WiFiScanner(transport: transport, scanner: scanner,
+                         configuration: .init(clientMAC: savedClientMAC))  // randomClientMAC() once, then keep it
+for try await page in await client.scan(.init(colorMode: .automatic)) {
+    try page.data.write(to: folder.appendingPathComponent("page-\(page.index).\(page.format == .tiff ? "tif" : "jpg")"))
+}
+print("blank sheets removed by the scanner:", await client.blankPagesSkipped)
+```
+
+`scan` waits for a sheet, scans each one put in until none comes within `nextSheetTimeout`, and always ends
+the job and releases the scanner, even after an error or when you stop iterating. On iOS, add
+`NSLocalNetworkUsageDescription` to your Info.plist; a refused local-network permission shows up as
+`ScannerError.network`.
+
+The protocol layer underneath builds and parses packets without opening sockets:
 
 ```swift
 import ScanSnipProtocol
@@ -87,6 +106,10 @@ Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX5
   white as a Group 4 TIFF.
 - **One client at a time.** While ScanSnap Home or another computer holds the scanner, registration
   answers −4 (busy).
+- **The iX100 removes blank sheets.** A sheet with nothing on it produces no page (`blankPagesSkipped`), so
+  test with sheets that have some marking on them.
+- **Feed only a loaded sheet.** The iX100's hardware status shows a sheet at the slot (byte 3) before it is
+  loaded (byte 2, `VENS.iX100SheetReady`); `WiFiScanner` waits for the second, as the iOS app does.
 
 ## Development
 
@@ -95,11 +118,24 @@ swift build && swift test
 ```
 
 ```bash
-xcodebuild -scheme ScanSnip -destination 'generic/platform=iOS Simulator' build
+xcodebuild -scheme ScanSnip-Package -destination 'generic/platform=iOS Simulator' build
 ```
 
-The tests need no scanner. They check byte layouts against the published protocol notes, using
-documentation addresses (192.0.2.x), locally administered MACs and made-up serial numbers.
+The tests need no scanner. They check byte layouts against the published protocol notes and run the client
+against a simulated iX100 that behaves as the real one did, using documentation addresses (192.0.2.x),
+locally administered MACs and made-up serial numbers.
+
+To try a real scanner from a Mac, build the `scansnip` tool (its own package, so this one stays library-only):
+
+```bash
+swift build --package-path Tools/scansnip
+```
+
+```bash
+Tools/scansnip/.build/debug/scansnip scan 192.0.2.20 --color auto --out ~/Desktop/scans --trace
+```
+
+`--trace` prints every command and the shape of each reply (never the password or image data).
 
 ## Credits and licence
 

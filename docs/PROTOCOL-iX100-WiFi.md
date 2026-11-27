@@ -192,18 +192,49 @@ sense. Lessons:
   at once; the read then got no answer in 15 s. The tool released (0x12) but never sent `D6`, and from then on
   every registration, from any client MAC, got −4 (busy) until the scanner was turned off and on again.
   Always send `D6` before releasing, even after an error.
-- **Wait for the feeder to read empty before waiting for the next sheet.** The stall above was most likely
-  the previous sheet still showing in `C2`. Waiting for an empty reading first, and allowing 60 s for the
-  read, gave clean scans after that.
+- **Feed only a loaded sheet.** The stall above came from feeding on byte 3 of `C2` (a sheet at the slot)
+  before the scanner had loaded it; see "Sheets, blank pages and large pages" below.
 - The status word (0x30) read 2 right after power-on and 3 after a scan.
+
+## Sheets, blank pages and large pages
+
+Found while building `ScanSnipScanner` (2026-11-27, firmware 0V00), with the `scansnip` tool's `--trace`
+and the iOS-app captures.
+
+**Hardware status (`C2`) has two sheet bits.** Byte 3 bit 7 clears as soon as a sheet reaches the slot
+(`00 00 00 00`); byte 2 bit 7 sets once the scanner has loaded it (`00 00 80 00`). In both captures the app
+fed only on `00 00 80 00`, at once (within 0.1 s), and never on `00 00 00 00`. `VENS.iX100SheetReady` reads
+byte 2. The client waits for it, then starts a job and feeds straight away, one job per sheet.
+
+**The scanner removes blank sheets.** With the app's settings, a sheet with nothing on it comes back as a read
+of only the chunk header (`00 00`) and end-of-medium sense, residual `0x3FFD5`, in automatic and in fixed
+colour mode alike. Sheets with any print, even faint show-through from the back, scan. Which `D4` byte turns
+this off is not known yet. `WiFiScanner` counts such sheets in `blankPagesSkipped` and yields no page.
+
+**A page larger than one read (0x40000 bytes) comes in several.** The first read answers GOOD with a full
+buffer; the last answers CHECK CONDITION with end of medium. Every read after the first starts with the
+same chunk header `00 00` (the chunk number does not go up), then two unknown bytes (`13 8f` and `8e b8`
+seen) and a copy of the JPEG's leading `APP0` and comment segments: 43 bytes in all, which are not image
+data. Joined without them, a 425 KB colour page decoded cleanly; joined with them, it had a smeared band
+where the reads met. `VENS.iX100ContinuationPrefixLength` gives the length to drop; the client checks the
+copy before dropping it. Multi-read black-and-white (TIFF) pages have not been seen.
+
+**Other observations.**
+- A printed page came back upside down (rotated 180°), as iX500 pages do. Whether that depends on how the
+  sheet is put in was not checked.
+- The status reply's last byte went 0x64, 0x5F, 0x50, 0x4A over an evening of scanning on battery: the
+  battery level in percent.
+- An idle iX100 announces an all-`FF` registered-host ID; `Announcement.hasRegisteredHost` treats it as none.
 
 ## Open questions
 
 1. `D4` combinations not captured: fixed colour with a fixed resolution, black and white at a fixed
-   resolution, page sizes other than A4, and the meaning of the constant bytes.
-2. Whether the iX500 accepts a mobile registration (reserve mode 1) the same way.
-3. What −6 means exactly, and what the iX100 returns to a paired host.
-4. The discovery state word `0x00800007`, the `SAV2` probe, and status word 2 versus 3.
-5. Control command 0x40 and its other opcodes.
-6. The iX100's own access-point mode (the scanner as the network).
-7. USB: the USB ID (`04C5:13F4`, from Scan) and INQUIRY over USB.
+   resolution, page sizes other than A4, the meaning of the constant bytes, and which one turns blank-page
+   removal off (capture the app with "remove blank pages" off).
+2. The two bytes in front of a continuation read's copied segments (`13 8f`, `8e b8`).
+3. Whether the iX500 accepts a mobile registration (reserve mode 1) the same way.
+4. What −6 means exactly, and what the iX100 returns to a paired host.
+5. The discovery state word `0x00800007`, the `SAV2` probe, and status word 2 versus 3.
+6. Control command 0x40 and its other opcodes.
+7. The iX100's own access-point mode (the scanner as the network).
+8. USB: the USB ID (`04C5:13F4`, from Scan) and INQUIRY over USB.

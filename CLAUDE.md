@@ -32,10 +32,13 @@ docs/PROTOCOL-iX500-WiFi.md before touching Wi-Fi code, and docs/ROADMAP.md for 
 
 ```bash
 swift build && swift test                       # macOS; no scanner needed
-xcodebuild -scheme ScanSnip -destination 'generic/platform=iOS Simulator' build
+xcodebuild -scheme ScanSnip-Package -destination 'generic/platform=iOS Simulator' build
+swift build --package-path Tools/scansnip       # the hardware-check tool
+Tools/scansnip/.build/debug/scansnip scan <scanner IP> --trace [--dump <dir>]
 ```
 
-Once the package has more than one product the Xcode scheme becomes `ScanSnip-Package`; update CI too.
+`--trace` prints each command and the shape of each reply; `--dump` also saves raw image reads. Both stay
+local: scans and dumps can hold documents, so keep them out of the repo.
 
 ## Layout
 
@@ -44,6 +47,10 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
 | `Sources/ScanSnipProtocol/VENS*.swift` | iX500 Wi-Fi wire format, no I/O: framing, discovery and notices, registration, SCSI-tunnel commands and scan parameters |
 | `Sources/ScanSnipProtocol/SCSISense.swift` | Sense data and paper problems, shared by USB and Wi-Fi |
 | `Sources/ScanSnipProtocol/ScanSnapModel.swift` | The models this package knows: USB IDs, duplex, Wi-Fi protocol |
+| `Sources/ScanSnipProtocol/VENSiX100.swift` | iX100 scan settings, the sheet-loaded bit, joining multi-read pages |
+| `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery, the `WiFiScanner` actor |
+| `Tests/ScanSnipScannerTests/SimulatedScanner.swift` | An in-memory iX100 that keeps the rules learned on hardware; extend it when a new one is found |
+| `Tools/scansnip/` | A separate package: the command-line tool for checking against real scanners |
 | `docs/PROTOCOL-iX500-WiFi.md` | Copy of ScanSnack's iX500 protocol notes, then open-scansnap's findings; our hardware findings go in its last section |
 | `docs/PROTOCOL-iX100-WiFi.md` | Our own iX100 notes from hardware and an iOS-app capture |
 
@@ -59,6 +66,12 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
 - **Register before any other control command, and always end a job.** The iX100 closes a status request
   sent before registering. A job released without `D6` leaves it answering −4 (busy) to everyone until it is
   power-cycled.
+- **iX100: feed only a loaded sheet.** `C2` byte 3 bit 7 clears when a sheet reaches the slot; byte 2 bit 7
+  sets once it is loaded. Feed on byte 2 (`VENS.iX100SheetReady`), as the iOS app does.
+- **iX100: blank sheets are removed.** A blank sheet's read is just the chunk header and end of medium, in
+  automatic and colour modes. It looked like a protocol bug for several rounds: test with marked sheets.
+- **iX100: big pages come in several reads,** each after the first starting with 43 bytes to drop
+  (`VENS.iX100ContinuationPrefixLength`); the chunk number stays 0.
 - **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second
   closes the connection with no answer, which looks like a protocol error. It cost three wrong guesses.
 - **The client MAC is the session identity, but need not be real.** A registration starts a reservation
@@ -81,8 +94,9 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
   checked); SANE drives it like an iX500 without duplex.
 - **Capturing the iOS app:** with the iPhone on USB, `rvictl -s <UDID>` (UDID from `xcrun devicectl list
   devices`) adds interface `rvi0`; the user runs `sudo tcpdump -i rvi0 -s 0 -w captures/<name>.pcap` (BPF
-  needs root, and commands typed into a new Terminal-panel tab can be lost while fish starts). Scan a blank
-  sheet, then `rvictl -x <UDID>`. Captures hold the serial and password: keep them in `captures/`.
+  needs root, and commands typed into a new Terminal-panel tab can be lost while fish starts). Scan a sheet
+  with a pen mark (not a document; blank ones are removed), then `rvictl -x <UDID>`. Captures hold the serial
+  and password: keep them in `captures/`.
 
 ## Conventions
 
