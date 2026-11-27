@@ -20,7 +20,7 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section("Scanner") {
-                    TextField("IP address, for example 192.0.2.20", text: $model.host)
+                    TextField("IP address (blank to search)", text: $model.host)
                         .keyboardType(.decimalPad)
                         .textContentType(.none)
                         .autocorrectionDisabled()
@@ -34,6 +34,7 @@ struct ContentView: View {
                         Button("Stop", role: .destructive) { model.stop() }
                     } else {
                         Button("Scan") { model.scan() }
+                        Button("Search the network") { model.search() }
                     }
                 }
                 if !model.pages.isEmpty {

@@ -21,7 +21,10 @@ actor SimulatedScanner {
     private(set) var stuck = false
 
     var model = "ScanSnap iX100"
+    var serial = "A0XX012345"
     var password = "2345"
+    /// Does not answer discovery (switched off, or not at this address).
+    var silent = false
     /// Sheets the user will put in, one after another.
     var sheets: [[UInt8]] = []
     /// Close the scan connection instead of answering this page's read.
@@ -50,6 +53,14 @@ actor SimulatedScanner {
 
     func setModel(_ model: String) {
         self.model = model
+    }
+
+    func setSerial(_ serial: String) {
+        self.serial = serial
+    }
+
+    func setSilent(_ silent: Bool) {
+        self.silent = silent
     }
 
     func setFailReadOfPage(_ page: Int?) {
@@ -255,6 +266,7 @@ actor SimulatedScanner {
         guard bytes.count == 32, Array(bytes[0..<4]) == VENS.magic else { return }
         let flag = UInt16(bytes[24]) << 8 | UInt16(bytes[25])
         if flag == VENS.discoveryFlag {
+            guard !silent else { return }
             socket.queue.push(announcement())
         } else if flag == VENS.heartbeatFlag {
             heartbeats += 1
@@ -270,7 +282,7 @@ actor SimulatedScanner {
         reply.replaceSubrange(8..<12, with: [0, 6, 0, 0x30])
         reply.replaceSubrange(16..<20, with: [192, 0, 2, 20])
         reply.replaceSubrange(28..<34, with: [0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE])
-        let name = Array("\(model.split(separator: " ").last ?? "")-A0XX012345".utf8)
+        let name = Array("\(model.split(separator: " ").last ?? "")-\(serial)".utf8)
         reply.replaceSubrange(40..<(40 + name.count), with: name)
         let modelBytes = Array(model.utf8)
         reply.replaceSubrange(104..<(104 + modelBytes.count), with: modelBytes)

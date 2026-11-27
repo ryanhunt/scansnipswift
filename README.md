@@ -25,7 +25,7 @@ top.
 | Product | What it does |
 |---|---|
 | `ScanSnipProtocol` | Wire formats only, no I/O: the Wi-Fi protocol of the iX500 and iX100 (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters for each model), SCSI sense data, and the model table (`ScanSnapModel`). |
-| `ScanSnipScanner` | Talks to a scanner over Wi-Fi with Network.framework: `ScannerDiscovery` finds it at an address, `WiFiScanner` scans pages. iX100 only for now. |
+| `ScanSnipScanner` | Talks to a scanner over Wi-Fi: `ScannerDiscovery.locate` finds it (remembered address, then a broadcast search), `WiFiScanner` scans pages. iX100 only for now. |
 
 Requires iOS 16 / macOS 13 or later and Swift 6.
 
@@ -46,8 +46,10 @@ targets: [
 import ScanSnipProtocol
 import ScanSnipScanner
 
-let transport = NetworkTransport(host: "192.0.2.20")           // the scanner's address
-let scanner = try await ScannerDiscovery.find(using: transport)  // waits for a sleeping scanner to answer
+// The scanner used last (saved below), else whatever answers a search of the local network.
+let scanner = try await ScannerDiscovery.locate(remembered: savedScanner)
+savedScanner = scanner.remembered                                // address and name; keep it on the device
+let transport = NetworkTransport(host: scanner.host)
 let client = WiFiScanner(transport: transport, scanner: scanner,
                          configuration: .init(clientMAC: savedClientMAC))  // randomClientMAC() once, then keep it
 for try await page in await client.scan(.init(colorMode: .automatic)) {
@@ -55,6 +57,12 @@ for try await page in await client.scan(.init(colorMode: .automatic)) {
 }
 print("blank sheets skipped:", await client.blankPagesSkipped)
 ```
+
+`locate` tries the remembered address first and, if nothing answers there (addresses change), searches the
+local network with `BroadcastBrowser`, preferring the remembered scanner by name. To list every scanner, call
+`BroadcastBrowser().browse()`; for an address the user typed, `ScannerDiscovery.find(using:)`. Searching
+broadcasts the discovery probe with BSD sockets; where a broadcast is refused it probes each address on the
+subnet instead. An iPhone on iOS 27.2.1 broadcast without the multicast entitlement (development build).
 
 `scan` waits for a sheet, scans each one put in until none comes within `nextSheetTimeout`, and always ends
 the job and releases the scanner, even after an error or when you stop iterating. That clean-up finishes in
