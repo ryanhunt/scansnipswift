@@ -11,6 +11,17 @@ import Testing
         return data
     }
 
+    @Test func endOfImageFromIX100() throws {
+        // REQUEST SENSE after an iX100 image read over Wi-Fi: no sense key, end of medium and incorrect
+        // length, and the information field holds the residual: 0x40000 asked - 77,693 sent = 0x2D083.
+        let data: [UInt8] = [0xF0, 0x00, 0x60, 0x00, 0x02, 0xD0, 0x83, 0x0A] + [UInt8](repeating: 0, count: 10)
+        let sense = try #require(SCSISense(data))
+        #expect(sense.key == 0)
+        #expect(sense.endOfMedium && sense.incorrectLength)
+        #expect(sense.information == 0x2D083)
+        #expect(sense.paperProblem == nil)
+    }
+
     @Test func paperProblems() throws {
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x03))).paperProblem == .feederEmpty)
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x01))).paperProblem == .jam)
@@ -52,6 +63,6 @@ import Testing
         #expect(ScanSnapModel.iX500.duplex && ScanSnapModel.iX500.sheetFeeder)
         #expect(!ScanSnapModel.iX100.duplex && !ScanSnapModel.iX100.sheetFeeder)
         #expect(ScanSnapModel.iX500.wiFi == .vens)
-        #expect(ScanSnapModel.iX100.wiFi == .undocumented)
+        #expect(ScanSnapModel.iX100.wiFi == .vens)
     }
 }

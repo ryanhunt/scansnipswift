@@ -45,6 +45,7 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
 | `Sources/ScanSnipProtocol/SCSISense.swift` | Sense data and paper problems, shared by USB and Wi-Fi |
 | `Sources/ScanSnipProtocol/ScanSnapModel.swift` | The models this package knows: USB IDs, duplex, Wi-Fi protocol |
 | `docs/PROTOCOL-iX500-WiFi.md` | Copy of ScanSnack's iX500 protocol notes, then open-scansnap's findings; our hardware findings go in its last section |
+| `docs/PROTOCOL-iX100-WiFi.md` | Our own iX100 notes from hardware and an iOS-app capture |
 
 ## Scanner facts that cost time to learn (from the upstreams)
 
@@ -52,8 +53,11 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
   only over USB, with SEND DIAGNOSTIC commands (`CLR HOSTID ADATA`, then `REG HOSTID DATA `); pairing clears
   the table, so it evicts every other computer. An unknown host ID gets −7. ScanSnap Home's host ID for a
   Mac is its `en1` (else `en0`) MAC shifted left 16 bits (`VENS.hostID(mac:)`).
-- **Phones skip the host table.** The ScanSnap iOS app gets in with the scanner's password instead; how it
-  registers is not yet documented. Spike it before building iOS Wi-Fi support.
+- **Mobile registrations skip the host table.** The ScanSnap iOS app registers with reserve mode 1 (body
+  offset 4) and a zero host ID, and the scanner checks only the password (`Registrant.mobile`). Reserve mode
+  0 without pairing gets −6. Checked on the iX100 (firmware 0V00); not yet on the iX500.
+- **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second
+  closes the connection with no answer, which looks like a protocol error. It cost three wrong guesses.
 - **The client MAC is the session identity, but need not be real.** A registration starts a reservation
   keyed to the frame's MAC; other MACs get −4 until it ends. The scanner accepts any MAC, so send a stable,
   locally administered one per host (macOS and iOS hide the real one).
@@ -68,9 +72,14 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
   status before telling the user the feeder is empty.
 - End the job (`D6`) on a new connection once the scan connection is closed; it is not answered before.
   It ends the job, not the reservation.
-- iX100: USB ID `04C5:13F4` (from Scan's tests, not yet checked). Scan leaves it unclaimed on purpose (Ricoh
-  still supports it); SANE drives it like an iX500 without duplex, and open-scansnap lists it as untested.
-  Its Wi-Fi protocol is undocumented.
+- iX100: speaks the iX500's `VENS` Wi-Fi protocol, with its own scan settings (`D4` takes 128 bytes) and
+  sequence (no `E9`; `D6` answered on the scan connection); on automatic settings it picks resolution and
+  colour and crops itself. See docs/PROTOCOL-iX100-WiFi.md. USB ID `04C5:13F4` (from Scan's tests, not yet
+  checked); SANE drives it like an iX500 without duplex.
+- **Capturing the iOS app:** with the iPhone on USB, `rvictl -s <UDID>` (UDID from `xcrun devicectl list
+  devices`) adds interface `rvi0`; the user runs `sudo tcpdump -i rvi0 -s 0 -w captures/<name>.pcap` (BPF
+  needs root, and commands typed into a new Terminal-panel tab can be lost while fish starts). Scan a blank
+  sheet, then `rvictl -x <UDID>`. Captures hold the serial and password: keep them in `captures/`.
 
 ## Conventions
 

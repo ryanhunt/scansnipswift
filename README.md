@@ -1,13 +1,14 @@
 # scansnipswift
 
 Open-source Swift packages for Fujitsu/Ricoh **ScanSnap** document scanners on iOS, iPadOS and macOS. Today it
-has the iX500's Wi-Fi protocol as pure, tested wire formats. A Wi-Fi client, a USB transport and iX100 support
-are next.
+has the Wi-Fi protocol the iX500 and iX100 share as pure, tested wire formats. A Wi-Fi client and a USB
+transport are next.
 
 This is a library, not an app: it has no UI. Apps add it as a Swift package and build their own interface on
 top.
 
-> **Status: early.** Nothing here has been run against real hardware yet. The maintainer tests with a
+> **Status: early.** On hardware so far: iX100 discovery and registration over Wi-Fi, and a capture of the
+> ScanSnap iOS app scanning with it. Nothing has scanned through this package yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -15,8 +16,8 @@ top.
 
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
-| iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Wi-Fi needs a one-time pairing over USB (ScanSnap Home does it). |
-| iX100 | planned | protocol undocumented | One sheet at a time, single-sided, battery. No open-source project drives it yet. |
+| iX500 (and iX500 EE) | planned | protocol ported (`VENS`), client planned | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
+| iX100 | planned | `VENS`: discovery and registration checked on hardware; scan sequence captured from the iOS app; client planned | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
@@ -48,14 +49,15 @@ import ScanSnipProtocol
 // A UDP discovery probe for port 52217, and its reply. `clientMAC` is any stable, locally administered
 // MAC: the scanner keys the session to it and does not check it against the real one.
 let probe = VENS.probe(hostIP: myIPv4, hostMAC: clientMAC, replyPort: replyPort)
-if let scanner = VENS.Announcement(replyBytes), scanner.knownModel == .iX500 {
+if let scanner = VENS.Announcement(replyBytes), scanner.knownModel?.wiFi == .vens {
     print(scanner.name, scanner.ipAddress, scanner.hasRegisteredHost)
 
-    // Register on TCP 53219 under the host ID ScanSnap Home paired this Mac with (from en1's MAC).
+    // Register on TCP 53219 the way the ScanSnap iOS app does: the password alone, no pairing. Send it as
+    // soon as the scanner's 16-byte greeting arrives. (A Mac paired by ScanSnap Home can instead register
+    // as `.pairedHost(hostID: VENS.hostID(mac: en1MAC))`.)
     let body = try VENS.registrationBody(
         interfaceVersion: scanner.interfaceVersion, hostIP: myIPv4,
-        password: scanner.factoryPassword ?? userPassword, hostID: VENS.hostID(mac: en1MAC),
-        date: .now, timeZone: .current)
+        password: scanner.factoryPassword ?? userPassword, registrant: .mobile, date: .now, timeZone: .current)
     let frame = VENS.clientFrame(command: VENS.ControlCommand.register.rawValue, mac: clientMAC, body: body)
 }
 
@@ -65,16 +67,22 @@ let setParameters = VENS.scsiFrame(mac: clientMAC, cdb: VENS.Command.setParamete
                                    output: VENS.parameterBlock(settings))
 ```
 
-Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX500-WiFi.md)):
+Things worth knowing (details in [docs/PROTOCOL-iX500-WiFi.md](docs/PROTOCOL-iX500-WiFi.md) and
+[docs/PROTOCOL-iX100-WiFi.md](docs/PROTOCOL-iX100-WiFi.md)):
 
-- **Pairing happens over USB.** Only USB commands add a computer to the iX500's host table, and pairing
-  removes every other computer. ScanSnap Home's host ID for a Mac is its `en1` MAC shifted left 16 bits
-  (`VENS.hostID(mac:)`). The ScanSnap iOS app skips the table and uses the scanner's password; how is not
-  yet documented.
+- **No pairing needed for a mobile registration.** The ScanSnap iOS app registers with reserve mode 1 and
+  no host ID (`Registrant.mobile`), and the scanner checks only the password. Checked on the iX100 from a
+  Mac and an iPhone; not yet on the iX500.
+- **Paired hosts are set up over USB.** Only USB commands add a computer to the iX500's host table, and
+  pairing removes every other computer. ScanSnap Home's host ID for a Mac is its `en1` MAC shifted left 16
+  bits (`VENS.hostID(mac:)`).
+- **Answer the greeting at once.** Each control command gets its own connection; send it as soon as the
+  16-byte greeting arrives, or the iX100 closes the connection without answering.
 - **Sessions expire.** Send a heartbeat probe (`VENS.heartbeatFlag`) at least every 10 seconds, or the
   scanner drops the session about 40 seconds after registering. `VENS.ControlCommand.release` ends it.
 - **The iX500 always scans colour, both sides.** Grey, single-sided output, cropping and blank-page removal
-  are done on the host. Pages arrive as JPEGs rotated by 180°.
+  are done on the host. Pages arrive as JPEGs rotated by 180°. The iX100, on automatic settings, picks the
+  resolution and colour and crops the page itself.
 - **One client at a time.** While ScanSnap Home or another computer holds the scanner, registration
   answers −4 (busy).
 

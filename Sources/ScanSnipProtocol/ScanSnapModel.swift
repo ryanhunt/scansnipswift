@@ -6,7 +6,8 @@
 public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
     /// How a model talks over Wi-Fi.
     public enum WiFiProtocol: Sendable, Hashable {
-        /// The iX500's protocol: TCP/UDP with the magic `VENS`. See `VENS`.
+        /// The iX500's protocol: TCP/UDP with the magic `VENS`. See `VENS`. The iX100 speaks it too, with
+        /// its own scan settings and sequence (docs/PROTOCOL-iX100-WiFi.md).
         case vens
         /// The model has Wi-Fi but nobody has documented its protocol yet.
         case undocumented
@@ -41,13 +42,14 @@ public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
     )
 
     /// ScanSnap iX100 (2014): battery-powered, one sheet at a time, one side, USB and Wi-Fi.
-    /// Its Wi-Fi protocol is undocumented; resolutions are not yet confirmed on hardware.
+    /// Over Wi-Fi it answers `VENS` discovery and accepts mobile registrations (checked on firmware 0V00,
+    /// 2026-11-27). Its USB ID and resolutions are not yet confirmed on hardware.
     public static let iX100 = ScanSnapModel(
         name: "iX100",
         usbProductIDs: [0x13F4],
         duplex: false,
         sheetFeeder: false,
-        wiFi: .undocumented,
+        wiFi: .vens,
         resolutions: [150, 200, 300, 600]
     )
 
