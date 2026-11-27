@@ -1,11 +1,15 @@
 extension VENS {
     /// Flag in a probe asking for a discovery reply.
     public static let discoveryFlag: UInt16 = 0x0010
-    /// Flag in a probe that is a heartbeat (sent from `heartbeatSourcePort`, sequence 1, every ~30 s).
+    /// Flag in a probe that is a heartbeat (sent from `heartbeatSourcePort`, sequence 1). Without
+    /// heartbeats the scanner ends a reservation about 40 s after registration, whatever commands it gets;
+    /// open-scansnap sends one at least every 10 s (ScanSnap Home sends three every ~30 s).
     public static let heartbeatFlag: UInt16 = 0x1000
 
     /// A 32-byte UDP probe for `discoveryPort`:
     /// `VENS | u32 sequence | host IPv4 | host MAC | u32 0 | u16 reply port | u16 flag | 6 B zero`.
+    /// The scanner ignores a probe without the host's IPv4 address but answers one whose MAC is all zeros,
+    /// so a broadcast discovery probe need not carry an identifier (per open-scansnap).
     public static func probe(
         hostIP: [UInt8], hostMAC: [UInt8], replyPort: UInt16, flag: UInt16 = discoveryFlag, sequence: UInt32 = 0
     ) -> [UInt8] {
@@ -34,8 +38,10 @@ extension VENS {
         public let model: String
         /// IPv4 address of the host that registered last (0.0.0.0 if none).
         public let registeredHostIP: [UInt8]
-        /// 8-byte ID of the registered host. Hosts are added to the scanner's table only over USB by
-        /// ScanSnap Home; a client reuses this ID to register (an unknown ID is refused with -7).
+        /// 8-byte ID of the registered host. Hosts are added to the scanner's table only over USB; an
+        /// ID missing from it is refused with -7. On a Mac paired by ScanSnap Home, compute the ID with
+        /// `VENS.hostID(mac:)` rather than trusting this field: it has been seen naming the connected
+        /// host, and what it shows when none is connected is not yet known.
         public let registeredHostID: [UInt8]
 
         public init?(_ data: [UInt8]) {

@@ -6,7 +6,7 @@
 ///
 /// Channels:
 /// - UDP 52217 on the scanner: discovery and heartbeat (`probe`, `Announcement`).
-/// - TCP 53219: control, one connection per command (registration, name, status).
+/// - TCP 53219: control, one connection per command (registration, release, name, status).
 /// - TCP 53218: a SCSI tunnel for scanning (`scsiFrame`, `SCSIReply`). One client at a time.
 /// - UDP 55265 / 53220 on the host: notices for the Scan button, lid closed and lid opened (`Notice`).
 public enum VENS {
@@ -34,8 +34,12 @@ public enum VENS {
     public enum ControlCommand: UInt32, Sendable {
         /// Run a SCSI command on the scan channel.
         case scsi = 0x01
-        /// Register this host for a session (`registrationBody`).
+        /// Register this host for a session (`registrationBody`). Starts a reservation keyed to the
+        /// frame's MAC; keep it alive with heartbeats (`heartbeatFlag`).
         case register = 0x11
+        /// End this client's reservation: a client frame with no body. Only the holder's release counts.
+        /// From thomergil/open-scansnap (ScanSnap Home's `SsSvcPCWIFITelReleaseScanner`).
+        case release = 0x12
         /// Read the scanner's name (64 bytes).
         case name = 0x13
         /// Read a status word (3 observed on mains power; meaning unknown).
@@ -45,7 +49,9 @@ public enum VENS {
     /// A frame from this host: `u32 length | VENS | u32 command | u32 0 | 6 B MAC | 10 B zero | body`.
     ///
     /// The MAC is the session identity: the scan channel only answers the MAC that sent the last
-    /// registration.
+    /// registration, and another MAC's registration gets -4 (busy) while that reservation lasts. The scanner
+    /// accepts any MAC, so it need not be the interface's real one (macOS and iOS hide that): use a stable,
+    /// locally administered MAC per host, as thomergil/open-scansnap does.
     public static func clientFrame(command: UInt32, mac: [UInt8], body: [UInt8] = []) -> [UInt8] {
         precondition(mac.count == 6, "A MAC address is 6 bytes")
         return bigEndian(UInt32(clientHeaderLength + body.count)) + magic + bigEndian(command) + bigEndian(UInt32(0))

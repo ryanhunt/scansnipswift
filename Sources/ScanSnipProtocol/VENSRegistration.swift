@@ -16,6 +16,16 @@ extension VENS {
         }
     }
 
+    /// The host ID ScanSnap Home pairs a Mac under: the Mac's hardware address shifted left 16 bits, as
+    /// 8 big-endian bytes. ScanSnap Home takes the address of `en1` (else the first other `en1…`
+    /// interface, else `en0`). From thomergil/open-scansnap, which checked it against ScanSnap Home's
+    /// stored value. Read the real address with SystemConfiguration: `getifaddrs` reports
+    /// 02:00:00:00:00:00 on macOS.
+    public static func hostID(mac: [UInt8]) -> [UInt8] {
+        precondition(mac.count == 6, "A MAC address is 6 bytes")
+        return mac + [0, 0]
+    }
+
     /// The 96-byte body of a registration (control command 0x11), sent on the control channel before
     /// each scan session:
     ///
