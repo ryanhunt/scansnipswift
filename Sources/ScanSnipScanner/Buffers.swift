@@ -92,7 +92,8 @@ final class ByteBuffer: @unchecked Sendable {
         if let current = waiter, current.id == id {
             waiter = nil
             resume = { current.continuation.resume(throwing: error) }
-        } else if waiter == nil {
+        } else if waiter == nil, id == nextID {
+            // Only the newest read can still be about to register; an older id is already finished.
             earlyFailures[id] = error
         }
         lock.unlock()
@@ -105,7 +106,7 @@ final class MessageQueue: @unchecked Sendable {
     private let lock = NSLock()
     private var messages: [[UInt8]] = []
     private var closed = false
-    private var waiter: (id: UInt64, continuation: CheckedContinuation<[UInt8]?, Never>)?
+    private var waiter: (id: UInt64, continuation: CheckedContinuation<[UInt8]?, Error>)?
     private var nextID: UInt64 = 0
     /// Timeouts that fired before their reader registered.
     private var expired: Set<UInt64> = []
@@ -129,10 +130,17 @@ final class MessageQueue: @unchecked Sendable {
         let current = waiter
         waiter = nil
         lock.unlock()
-        current?.continuation.resume(returning: nil)
+        current?.continuation.resume(throwing: ScannerError.connectionClosed("socket closed"))
     }
 
-    func next(timeout: Duration) async -> [UInt8]? {
+    var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
+    }
+
+    /// The next message, nil on timeout; throws `ScannerError.connectionClosed` once the queue is closed and empty.
+    func next(timeout: Duration) async throws -> [UInt8]? {
         let id = makeID()
         let timer = Task { [weak self] in
             guard (try? await Task.sleep(for: timeout)) != nil else { return }
@@ -142,13 +150,16 @@ final class MessageQueue: @unchecked Sendable {
             timer.cancel()
             forget(id)
         }
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             lock.lock()
             if !messages.isEmpty {
                 let message = messages.removeFirst()
                 lock.unlock()
                 continuation.resume(returning: message)
-            } else if closed || expired.remove(id) != nil {
+            } else if closed {
+                lock.unlock()
+                continuation.resume(throwing: ScannerError.connectionClosed("socket closed"))
+            } else if expired.remove(id) != nil {
                 lock.unlock()
                 continuation.resume(returning: nil)
             } else {
@@ -178,7 +189,7 @@ final class MessageQueue: @unchecked Sendable {
         if let current = waiter, current.id == id {
             waiter = nil
             resume = { current.continuation.resume(returning: nil) }
-        } else if waiter == nil {
+        } else if waiter == nil, id == nextID {
             expired.insert(id)
         }
         lock.unlock()
@@ -197,5 +208,20 @@ final class OnceFlag: @unchecked Sendable {
         if taken { return false }
         taken = true
         return true
+    }
+}
+
+/// A value behind a lock, for state shared with callbacks.
+final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) {
+        stored = value
+    }
+
+    var value: Value {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
     }
 }

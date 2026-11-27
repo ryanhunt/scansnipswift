@@ -90,13 +90,30 @@ do {
         let client = WiFiScanner(transport: transport, scanner: scanner, configuration: configuration)
         print("Put a sheet in the scanner.")
         let stamp = Int(Date().timeIntervalSince1970)
-        var count = 0
-        for try await page in await client.scan(parameters) {
-            let name = String(format: "scan-%d-%03d.%@", stamp, page.index + 1, page.format == .tiff ? "tif" : "jpg")
-            try page.data.write(to: directory.appendingPathComponent(name))
-            count += 1
-            print("page \(page.index + 1): \(page.data.count) bytes, \(name). Put in another sheet, or wait to finish.")
+        let pages = await client.scan(parameters)
+        // The scan runs as a task, so Ctrl-C or a failed write can cancel it; the tool then waits for the
+        // library to end the job and release the scanner before exiting (an iX100 left mid-job stays busy).
+        let scanTask = Task { () throws -> Int in
+            var count = 0
+            for try await page in pages {
+                let name = String(format: "scan-%d-%03d.%@", stamp, page.index + 1, page.format == .tiff ? "tif" : "jpg")
+                try page.data.write(to: directory.appendingPathComponent(name))
+                count += 1
+                print("page \(page.index + 1): \(page.data.count) bytes, \(name). Put in another sheet, or wait to finish.")
+            }
+            return count
         }
+        signal(SIGINT, SIG_IGN)
+        let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        interrupt.setEventHandler {
+            print("stopping: ending the job and releasing the scanner")
+            scanTask.cancel()
+        }
+        interrupt.resume()
+        let result = await scanTask.result
+        await client.waitUntilIdle()
+        interrupt.cancel()
+        let count = try result.get()
         let skipped = await client.blankPagesSkipped
         print("done: \(count) page\(count == 1 ? "" : "s")"
               + (skipped > 0 ? ", \(skipped) blank sheet\(skipped == 1 ? "" : "s") removed by the scanner" : ""))

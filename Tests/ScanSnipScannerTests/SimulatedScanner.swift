@@ -13,6 +13,7 @@ actor SimulatedScanner {
     private(set) var events: [String] = []
     private(set) var statusPolls = 0
     private(set) var scanConnections = 0
+    private(set) var datagramSockets = 0
     private(set) var heartbeats = 0
     private(set) var registeredMAC: [UInt8]?
     private(set) var jobOpen = false
@@ -27,10 +28,14 @@ actor SimulatedScanner {
     var failReadOfPage: Int?
     /// Answer reads only after this many later commands have arrived (a late reply, as on hardware).
     var lateReads = false
+    /// Close the status request's connection without answering (a failure right after registering).
+    var dropStatus = false
+    /// Answer end-of-job with CHECK CONDITION, as if the job could not be ended.
+    var failEndJob = false
+    /// Close each datagram socket from the scanner's side after this many heartbeats on it.
+    var closeSocketsAfterHeartbeats: Int?
     private var lateReply: (() -> Void)?
 
-    private var staleReads = 0
-    private var gapPending = false
     /// Reads left while the next sheet touches the slot but is not loaded yet.
     private var touchingReads = 3
     private var currentImage: [UInt8] = []
@@ -55,6 +60,22 @@ actor SimulatedScanner {
         lateReads = late
     }
 
+    func setDropStatus(_ drop: Bool) {
+        dropStatus = drop
+    }
+
+    func setFailEndJob(_ fail: Bool) {
+        failEndJob = fail
+    }
+
+    func setCloseSocketsAfterHeartbeats(_ count: Int?) {
+        closeSocketsAfterHeartbeats = count
+    }
+
+    func openedDatagramSocket() {
+        datagramSockets += 1
+    }
+
     // MARK: Connections
 
     func accept(_ stream: SimulatedStream) {
@@ -68,7 +89,7 @@ actor SimulatedScanner {
         if stream.port == VENS.controlPort {
             control(command, mac: mac, body: Array(frame[32...]), stream: stream)
         } else if mac != registeredMAC {
-            stream.inbound.close(.connectionClosed("closed by the scanner"))
+            stream.closeFromScanner()
         } else {
             scsi(frame, stream: stream)
         }
@@ -94,7 +115,7 @@ actor SimulatedScanner {
             stream.inbound.append(VENS.bigEndian(UInt32(20)) + VENS.magic + VENS.bigEndian(status)
                                   + [0, 6, 0, 0, 0, 0, 0, 0])
         case _ where mac != registeredMAC:
-            stream.inbound.close(.connectionClosed("closed by the scanner"))
+            stream.closeFromScanner()
         case VENS.ControlCommand.release.rawValue:
             events.append("release")
             if jobOpen { stuck = true }
@@ -102,10 +123,11 @@ actor SimulatedScanner {
             stream.inbound.append(VENS.bigEndian(UInt32(16)) + VENS.magic + [UInt8](repeating: 0, count: 8))
         case VENS.ControlCommand.status.rawValue:
             events.append("status")
+            if dropStatus { return stream.closeFromScanner() }
             stream.inbound.append(VENS.bigEndian(UInt32(32)) + VENS.magic + [UInt8](repeating: 0, count: 8)
                                   + [0, 0, 0, 3, 2, 0, 0x80, 0x64] + [UInt8](repeating: 0, count: 8))
         default:
-            stream.inbound.close(.connectionClosed("closed by the scanner"))
+            stream.closeFromScanner()
         }
     }
 
@@ -160,23 +182,22 @@ actor SimulatedScanner {
             pendingImage = currentImage
             continuing = false
             sheets.removeFirst()
-            staleReads = 2
-            gapPending = true
             touchingReads = 3
             reply(0)
         case 0x28:
             let page = Int(cdb[10])
             events.append("28#\(page)")
             if page == failReadOfPage {
-                stream.inbound.close(.connectionClosed("closed by the scanner"))
+                stream.closeFromScanner()
                 return
             }
             // A read carries the chunk header, then (after the first) two bytes and a copy of the image's
             // leading segments, then as much of the image as fits; GOOD if more is left, else end of medium.
             let length = Int(cdb[6]) << 16 | Int(cdb[7]) << 8 | Int(cdb[8])
             var data: [UInt8] = [UInt8(page & 0xFF), 0]
-            if continuing, let prefix = VENS.iX100ContinuationPrefixLength(currentImage) {
-                data += [0x13, 0x8F] + currentImage[2..<prefix]
+            if continuing {
+                // Worked out here, not with the client's own helper, so the test can catch a wrong helper.
+                data += [0x13, 0x8F] + currentImage[2..<Self.leadingSegmentsEnd(currentImage)]
             }
             let take = min(pendingImage.count, length - data.count)
             data += pendingImage.prefix(take)
@@ -197,6 +218,7 @@ actor SimulatedScanner {
             reply(0, lastSense)
         case 0xD6:
             events.append("D6")
+            if failEndJob { return checkCondition(key: 5, code: 0x2C, qualifier: 0) }
             jobOpen = false
             reply(0)
         default:
@@ -205,19 +227,20 @@ actor SimulatedScanner {
         }
     }
 
+    /// Where the JPEG's leading APPn and comment segments end (43 for the iX100's pages).
+    static func leadingSegmentsEnd(_ jpeg: [UInt8]) -> Int {
+        var offset = 2
+        while offset + 4 <= jpeg.count, jpeg[offset] == 0xFF, jpeg[offset + 1] >= 0xE0, jpeg[offset + 1] != 0xFF,
+              jpeg[offset + 1] <= 0xEF || jpeg[offset + 1] == 0xFE {
+            offset += 2 + Int(jpeg[offset + 2]) * 256 + Int(jpeg[offset + 3])
+        }
+        return offset
+    }
+
     enum Sensor { case empty, touching, loaded }
 
-    /// A fed sheet still shows as loaded for two reads, then the sensor reads empty once; the next sheet then
-    /// touches the slot for three reads before it is loaded.
+    /// No sheet reads empty; the next sheet then touches the slot for three reads before it is loaded.
     private func sensor() -> Sensor {
-        if staleReads > 0 {
-            staleReads -= 1
-            return .loaded
-        }
-        if gapPending {
-            gapPending = false
-            return .empty
-        }
         guard !sheets.isEmpty else { return .empty }
         if touchingReads > 0 {
             touchingReads -= 1
@@ -235,7 +258,9 @@ actor SimulatedScanner {
             socket.queue.push(announcement())
         } else if flag == VENS.heartbeatFlag {
             heartbeats += 1
+            socket.heartbeats += 1
             socket.queue.push(VENS.magic + [0x80, 0x01, 0, 0, 0, 0, 0, 0])
+            if let limit = closeSocketsAfterHeartbeats, socket.heartbeats >= limit { socket.queue.close() }
         }
     }
 
@@ -264,7 +289,8 @@ struct SimulatedTransport: VENSTransport {
     }
 
     func datagramSocket(port: UInt16) async throws -> any VENSDatagramSocket {
-        SimulatedDatagramSocket(scanner: scanner)
+        await scanner.openedDatagramSocket()
+        return SimulatedDatagramSocket(scanner: scanner)
     }
 }
 
@@ -313,6 +339,12 @@ final class SimulatedStream: VENSStream, @unchecked Sendable {
         inbound.close(.connectionClosed("closed"))
     }
 
+    /// The scanner closed the connection: nothing more arrives, and later sends fail, as on a real socket.
+    func closeFromScanner() {
+        markClosed()
+        inbound.close(.connectionClosed("closed by the scanner"))
+    }
+
     private func markClosed() {
         lock.lock()
         closed = true
@@ -325,17 +357,21 @@ final class SimulatedDatagramSocket: VENSDatagramSocket, @unchecked Sendable {
     let localPort: UInt16 = 55264
     let queue = MessageQueue()
     let scanner: SimulatedScanner
+    /// Touched only by the scanner actor.
+    nonisolated(unsafe) var heartbeats = 0
 
     init(scanner: SimulatedScanner) {
         self.scanner = scanner
     }
 
     func send(_ bytes: [UInt8]) async throws {
+        // Like a cancelled NWConnection, a closed socket sends nothing.
+        guard !queue.isClosed else { throw ScannerError.connectionClosed("socket closed") }
         await scanner.datagram(bytes, from: self)
     }
 
-    func receive(timeout: Duration) async -> [UInt8]? {
-        await queue.next(timeout: timeout)
+    func receive(timeout: Duration) async throws -> [UInt8]? {
+        try await queue.next(timeout: timeout)
     }
 
     func close() async {

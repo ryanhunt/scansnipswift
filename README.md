@@ -57,7 +57,10 @@ print("blank sheets removed by the scanner:", await client.blankPagesSkipped)
 ```
 
 `scan` waits for a sheet, scans each one put in until none comes within `nextSheetTimeout`, and always ends
-the job and releases the scanner, even after an error or when you stop iterating. On iOS, add
+the job and releases the scanner, even after an error or when you stop iterating. That clean-up finishes in
+the background: `await client.waitUntilIdle()` before scanning again or letting the app suspend. If a job
+cannot be ended, the scanner is left to drop the session by itself rather than released mid-job, which
+would leave an iX100 busy until it is turned off and on. On iOS, add
 `NSLocalNetworkUsageDescription` to your Info.plist; a refused local-network permission shows up as
 `ScannerError.network`.
 

@@ -92,6 +92,8 @@ private func bytes(_ hex: String) -> [UInt8] {
         #expect(VENS.iX100ContinuationPrefixLength(image) == 43)
         #expect(VENS.iX100ContinuationPrefixLength([0xFF, 0xD8, 0xFF, 0xDB, 0, 4]) == 2)
         #expect(VENS.iX100ContinuationPrefixLength(Array("II*\u{0}".utf8)) == nil)
+        // An APP0 that claims 16 bytes but is cut short: malformed, so no length (it used to give 20).
+        #expect(VENS.iX100ContinuationPrefixLength([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]) == nil)
     }
 
     @Test func onlyBlackAndWhiteReturnsTIFF() {

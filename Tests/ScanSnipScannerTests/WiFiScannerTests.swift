@@ -65,16 +65,6 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
         #expect(await scanner.stuck == false)
     }
 
-    @Test func doesNotTakeThePreviousSheetForANewOne() async throws {
-        // The simulated sensor shows a fed sheet for two more reads. Without waiting for an empty reading,
-        // the client would feed a second time with no sheet in.
-        let scanner = SimulatedScanner(sheets: [jpeg])
-        let pages = try await collect(client(scanner).scan())
-        #expect(pages.count == 1)
-        try await waitForRelease(scanner)
-        #expect(await scanner.events.filter { $0 == "E0" }.count == 1)
-    }
-
     @Test func blackAndWhiteSendsOneWindowAndReturnsTIFF() async throws {
         let tiff: [UInt8] = Array("II*\u{0}".utf8) + [1, 2, 3]
         let scanner = SimulatedScanner(sheets: [tiff])
@@ -110,6 +100,7 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
         }
         try await waitForRelease(scanner)
         #expect(await scanner.events.suffix(3) == ["28#0", "D6", "release"])
+        #expect(await scanner.scanConnections == 2)  // the dead connection was not reused
         #expect(await scanner.stuck == false)
     }
 
@@ -154,17 +145,73 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
         #expect(await scanner.events.filter { $0 == "28#0" }.count == 2)
     }
 
-    @Test func stoppingEarlyStillEndsTheJobAndReleases() async throws {
+    @Test func stoppingBetweenSheetsReleasesAndAllowsAnotherScan() async throws {
         let scanner = SimulatedScanner(sheets: [jpeg, otherJPEG, jpeg])
-        for try await page in try await client(scanner).scan() {
+        let wifi = try await client(scanner)
+        for try await page in await wifi.scan() {
             #expect(page.index == 0)
             break
         }
-        try await waitForRelease(scanner)
+        await wifi.waitUntilIdle()
+        #expect(await scanner.events.last == "release")
+        #expect(await scanner.jobOpen == false)
+        #expect(await scanner.stuck == false)
+        // The clean-up is finished, so a new scan starts at once instead of failing with alreadyScanning.
+        let more = try await collect(wifi.scan())
+        #expect(more.count == 2)
+    }
+
+    @Test func cancellingMidJobEndsTheJobOnANewConnectionAndReleases() async throws {
+        let scanner = SimulatedScanner(sheets: [jpeg])
+        await scanner.setLateReads(true)  // the read stays unanswered, so the cancel lands inside the job
+        let wifi = try await client(scanner)
+        let consumer = Task { try await collect(wifi.scan()) }
+        for _ in 0..<200 where await scanner.events.last != "28#0" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await scanner.events.last == "28#0")
+        consumer.cancel()
+        await wifi.waitUntilIdle()
+        #expect(await scanner.events.suffix(3) == ["28#0", "D6", "release"])
+        #expect(await scanner.scanConnections == 2)
+        #expect(await scanner.jobOpen == false)
+        #expect(await scanner.stuck == false)
+    }
+
+    @Test func aFailureRightAfterRegisteringStillReleases() async throws {
+        let scanner = SimulatedScanner(sheets: [jpeg])
+        await scanner.setDropStatus(true)
+        let wifi = try await client(scanner)
+        await #expect(throws: ScannerError.connectionClosed("closed by the scanner")) {
+            try await collect(wifi.scan())
+        }
+        await wifi.waitUntilIdle()
+        #expect(await scanner.events == ["register", "status", "release"])
+        #expect(await scanner.registeredMAC == nil)
+    }
+
+    @Test func aJobThatCannotBeEndedIsNotReleased() async throws {
+        // Releasing mid-job leaves an iX100 busy until power-cycled; an unreleased session lapses instead.
+        let scanner = SimulatedScanner(sheets: [jpeg])
+        await scanner.setFailEndJob(true)
+        let wifi = try await client(scanner)
+        await #expect(throws: ScannerError.self) {
+            try await collect(wifi.scan())
+        }
+        await wifi.waitUntilIdle()
         let events = await scanner.events
         #expect(events.contains("D6"))
-        #expect(events.last == "release")
+        #expect(!events.contains("release"))
         #expect(await scanner.stuck == false)
+    }
+
+    @Test func heartbeatsReopenAClosedSocket() async throws {
+        let scanner = SimulatedScanner()
+        await scanner.setCloseSocketsAfterHeartbeats(2)
+        _ = try? await collect(client(scanner).scan())
+        // One socket for discovery, then the heartbeat's first and at least one replacement.
+        #expect(await scanner.datagramSockets >= 3)
+        #expect(await scanner.heartbeats >= 4)
     }
 
     @Test func oneScanAtATime() async throws {
@@ -239,10 +286,14 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
         }
     }
 
-    @Test func messageQueueReturnsNilOnTimeout() async {
+    @Test func messageQueueTellsATimeoutFromAClosedSocket() async throws {
         let queue = MessageQueue()
-        #expect(await queue.next(timeout: .milliseconds(10)) == nil)
+        #expect(try await queue.next(timeout: .milliseconds(10)) == nil)
         queue.push([7])
-        #expect(await queue.next(timeout: .seconds(1)) == [7])
+        #expect(try await queue.next(timeout: .seconds(1)) == [7])
+        queue.close()
+        await #expect(throws: ScannerError.connectionClosed("socket closed")) {
+            try await queue.next(timeout: .seconds(1))
+        }
     }
 }

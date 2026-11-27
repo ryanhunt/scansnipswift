@@ -149,7 +149,8 @@ extension VENS {
               (0xE0...0xEF).contains(imageStart[offset + 1]) || imageStart[offset + 1] == 0xFE {
             offset += 2 + (Int(imageStart[offset + 2]) << 8 | Int(imageStart[offset + 3]))
         }
-        return offset
+        // A segment that runs past the data means a malformed or truncated start.
+        return offset <= imageStart.count ? offset : nil
     }
 
     /// The `D4` command for an iX100 parameter block of `length` bytes (80 or 128).

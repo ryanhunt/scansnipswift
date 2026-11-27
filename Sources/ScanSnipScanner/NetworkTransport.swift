@@ -35,20 +35,20 @@ final class NetworkConnection: @unchecked Sendable {
                                   using: parameters)
     }
 
-    /// Waits for `.ready`. `.waiting` (no route, or local-network access refused on iOS), `.failed` and
-    /// `.cancelled` all end the wait with an error, so a cancelled connection never leaves it hanging.
+    /// Waits for `.ready`, up to `timeout`. `.waiting` is not final: on iOS the first local-network
+    /// connection waits while the permission alert is up, and a scanner waking up can briefly have no route.
+    /// The last waiting reason is reported if the timeout passes. `.failed` and `.cancelled` end the wait at
+    /// once, so a cancelled connection never leaves it hanging.
     func start(timeout: Duration, onClose: @escaping @Sendable (ScannerError) -> Void) async throws {
         let once = OnceFlag()
+        let lastWaiting = LockedBox<String?>(nil)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.stateUpdateHandler = { [connection] state in
+            connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     if once.take() { continuation.resume() }
                 case .waiting(let error):
-                    if once.take() {
-                        connection.cancel()
-                        continuation.resume(throwing: ScannerError.network("\(error)"))
-                    }
+                    lastWaiting.value = "\(error)"
                 case .failed(let error):
                     if once.take() {
                         continuation.resume(throwing: ScannerError.network("\(error)"))
@@ -69,7 +69,11 @@ final class NetworkConnection: @unchecked Sendable {
             queue.asyncAfter(deadline: .now() + timeout.timeInterval) { [connection] in
                 if once.take() {
                     connection.cancel()
-                    continuation.resume(throwing: ScannerError.timedOut("connect"))
+                    if let reason = lastWaiting.value {
+                        continuation.resume(throwing: ScannerError.network(reason))
+                    } else {
+                        continuation.resume(throwing: ScannerError.timedOut("connect"))
+                    }
                 }
             }
         }
@@ -96,6 +100,10 @@ final class NetworkStream: VENSStream, @unchecked Sendable {
         self.network = network
     }
 
+    deinit {
+        network.connection.cancel()
+    }
+
     static func open(host: String, port: UInt16, timeout: Duration) async throws -> NetworkStream {
         let network = NetworkConnection(host: host, port: port, parameters: .tcp)
         let stream = NetworkStream(network)
@@ -106,7 +114,9 @@ final class NetworkStream: VENSStream, @unchecked Sendable {
     }
 
     private func receiveLoop() {
-        network.connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
+        // Weak, so a stream dropped without close() is freed and its deinit cancels the connection.
+        network.connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
             if let data, !data.isEmpty { buffer.append(data) }
             if let error {
                 buffer.close(.network("\(error)"))
@@ -144,6 +154,10 @@ final class NetworkDatagramSocket: VENSDatagramSocket, @unchecked Sendable {
         self.localPort = localPort
     }
 
+    deinit {
+        network.connection.cancel()
+    }
+
     static func open(host: String, port: UInt16, timeout: Duration) async throws -> NetworkDatagramSocket {
         let network = NetworkConnection(host: host, port: port, parameters: .udp)
         try await network.start(timeout: timeout) { _ in }
@@ -159,7 +173,8 @@ final class NetworkDatagramSocket: VENSDatagramSocket, @unchecked Sendable {
     }
 
     private func receiveLoop() {
-        network.connection.receiveMessage { [self] data, _, _, error in
+        network.connection.receiveMessage { [weak self] data, _, _, error in
+            guard let self else { return }
             if let data, !data.isEmpty { queue.push(Array(data)) }
             if error != nil {
                 queue.close()
@@ -173,8 +188,8 @@ final class NetworkDatagramSocket: VENSDatagramSocket, @unchecked Sendable {
         try await network.send(bytes)
     }
 
-    func receive(timeout: Duration) async -> [UInt8]? {
-        await queue.next(timeout: timeout)
+    func receive(timeout: Duration) async throws -> [UInt8]? {
+        try await queue.next(timeout: timeout)
     }
 
     func close() async {

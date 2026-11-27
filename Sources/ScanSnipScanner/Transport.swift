@@ -15,8 +15,9 @@ public protocol VENSDatagramSocket: Sendable {
     /// The local UDP port, which the scanner answers.
     var localPort: UInt16 { get }
     func send(_ bytes: [UInt8]) async throws
-    /// The next datagram, or nil if none arrives within `timeout`.
-    func receive(timeout: Duration) async -> [UInt8]?
+    /// The next datagram, or nil if none arrives within `timeout`. Throws `ScannerError.connectionClosed` once
+    /// the socket is closed (by `close()` or a network error), so callers can tell that from silence.
+    func receive(timeout: Duration) async throws -> [UInt8]?
     func close() async
 }
 

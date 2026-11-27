@@ -71,6 +71,7 @@ public actor WiFiScanner {
     private var scanStream: (any VENSStream)?
     private var jobOpen = false
     private var registered = false
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(transport: any VENSTransport, scanner: DiscoveredScanner, configuration: Configuration) {
         self.transport = transport
@@ -79,8 +80,9 @@ public actor WiFiScanner {
     }
 
     /// Scans sheets until none is put in within `nextSheetTimeout` after the last page, one job per sheet.
-    /// Pages arrive as they are read. Stop iterating, or cancel the task, to end the scan early; the job is still ended and the
-    /// scanner released.
+    /// Pages arrive as they are read. Stop iterating, or cancel the task, to end the scan early; the job is
+    /// still ended and the scanner released, in the background: await `waitUntilIdle()` before scanning again
+    /// or letting the app suspend.
     public func scan(_ parameters: VENS.IX100ScanParameters = .init()) -> AsyncThrowingStream<Page, Error> {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: Page.self)
         guard !scanning else {
@@ -94,9 +96,20 @@ public actor WiFiScanner {
         return stream
     }
 
+    /// Returns once no scan is running and its clean-up (ending the job, releasing the scanner) is done.
+    public func waitUntilIdle() async {
+        guard scanning else { return }
+        await withCheckedContinuation { idleWaiters.append($0) }
+    }
+
     private func run(_ parameters: VENS.IX100ScanParameters,
                      _ continuation: AsyncThrowingStream<Page, Error>.Continuation) async {
-        defer { scanning = false }
+        defer {
+            scanning = false
+            let waiters = idleWaiters
+            idleWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
         do {
             try await session(parameters, continuation)
             continuation.finish()
@@ -115,11 +128,12 @@ public actor WiFiScanner {
         guard let password = configuration.password ?? scanner.announcement.factoryPassword else {
             throw ScannerError.passwordRequired
         }
-        try await register(password: password)
-
         var failure: Error?
         var heartbeat: (socket: any VENSDatagramSocket, task: Task<Void, Never>)?
         do {
+            // Inside the clean-up path: a registration the scanner accepted is released even if what follows
+            // it (the status read, or the reply itself) fails or is cancelled.
+            try await register(password: password)
             heartbeat = try await startHeartbeat()
             try await scanPages(parameters, continuation)
         } catch {
@@ -140,42 +154,65 @@ public actor WiFiScanner {
                                       hostIP: scanner.localIPv4, password: password, registrant: .mobile,
                                       date: Date(), timeZone: .current)
         }
+        // Counted as registered from the moment the frame may reach the scanner, so a failure or cancellation
+        // before the reply is read still releases it (a release from a client that does not hold it is ignored).
+        registered = true
         let reply = try await control(.register, body: body)
         let status = try wire { () throws(VENSError) in try VENS.RegistrationStatus(reply: reply) }
-        guard status == .accepted else { throw ScannerError.registrationRefused(status) }
-        registered = true
+        guard status == .accepted else {
+            registered = false
+            throw ScannerError.registrationRefused(status)
+        }
         // The iOS app reads the status straight after registering; do the same (byte 11 of the reply looks
         // like the battery level).
         _ = try await control(.status)
     }
 
+    /// Sends heartbeats until cancelled. If the socket closes (a network drop), it opens a new one.
     private func startHeartbeat() async throws -> (socket: any VENSDatagramSocket, task: Task<Void, Never>) {
-        let socket = try await transport.datagramSocket(port: VENS.discoveryPort)
-        let beat = VENS.probe(hostIP: scanner.localIPv4, hostMAC: mac, replyPort: socket.localPort,
-                              flag: VENS.heartbeatFlag, sequence: 1)
-        let interval = configuration.heartbeatInterval
+        let first = try await transport.datagramSocket(port: VENS.discoveryPort)
+        let holder = SocketHolder(first)
+        let transport = transport
+        let (hostIP, mac, interval) = (scanner.localIPv4, mac, configuration.heartbeatInterval)
         let task = Task {
             while !Task.isCancelled {
+                var socket = holder.socket
+                let beat = VENS.probe(hostIP: hostIP, hostMAC: mac, replyPort: socket.localPort,
+                                      flag: VENS.heartbeatFlag, sequence: 1)
                 try? await socket.send(beat)
                 // Drain the scanner's 12-byte answers while waiting.
                 let until = ContinuousClock.now + interval
                 while ContinuousClock.now < until, !Task.isCancelled {
-                    _ = await socket.receive(timeout: until - ContinuousClock.now)
+                    do {
+                        _ = try await socket.receive(timeout: until - ContinuousClock.now)
+                    } catch {
+                        await socket.close()
+                        guard let reopened = try? await transport.datagramSocket(port: VENS.discoveryPort) else {
+                            try? await Task.sleep(until: until, clock: .continuous)
+                            break
+                        }
+                        socket = reopened
+                        holder.socket = reopened
+                        break
+                    }
                 }
             }
         }
-        return (socket, task)
+        return (HolderSocket(holder), task)
     }
 
     /// Ends an open job (on the scan connection, or a new one if that is gone) and releases the scanner.
+    /// If the job cannot be ended, the scanner is not released: an iX100 released mid-job stays busy until it
+    /// is power-cycled, while an unreleased session lapses about 40 s after the heartbeats stop.
     private func finishSession() async {
+        var jobEnded = true
         if jobOpen {
-            var ended = false
-            if let stream = scanStream, (try? await command(stream, VENS.Command.endJob)) != nil {
-                ended = true
+            jobEnded = false
+            if let stream = scanStream, (try? await command(stream, VENS.Command.endJob))?.isGood == true {
+                jobEnded = true
             }
-            if !ended, let stream = try? await openScanChannel() {
-                _ = try? await command(stream, VENS.Command.endJob)
+            if !jobEnded, let stream = try? await openScanChannel() {
+                jobEnded = (try? await command(stream, VENS.Command.endJob))?.isGood == true
                 await stream.close()
             }
             jobOpen = false
@@ -185,7 +222,7 @@ public actor WiFiScanner {
             scanStream = nil
         }
         if registered {
-            _ = try? await control(.release)
+            if jobEnded { _ = try? await control(.release) }
             registered = false
         }
     }
@@ -198,12 +235,13 @@ public actor WiFiScanner {
         let block = VENS.iX100ParameterBlock(parameters)
         var index = 0
         var sheetsFed = 0
-        while sheetsFed < VENS.maximumSheetsPerJob {
+        // Every sheet is its own job with image index 0, so the iX500's per-job sheet limit does not apply.
+        while true {
             let first = sheetsFed == 0
             let stream = try await openScanChannel()
             scanStream = stream
             let timeout = first ? configuration.firstSheetTimeout : configuration.nextSheetTimeout
-            guard try await waitForSheet(stream, timeout: timeout, emptyFirst: !first) else {
+            guard try await waitForSheet(stream, timeout: timeout) else {
                 await stream.close()
                 scanStream = nil
                 if first { throw ScannerError.noSheet }
@@ -253,18 +291,16 @@ public actor WiFiScanner {
     }
 
     /// Polls the hardware status until the scanner has loaded a sheet (`VENS.iX100SheetReady`). A sheet that
-    /// only touches the entry slot is not ready (the app never feeds it; doing so stalled a read). After a page,
-    /// it first waits
-    /// for a not-ready reading, so a stale reading is never taken for a new sheet. Returns false on timeout.
-    private func waitForSheet(_ stream: any VENSStream, timeout: Duration, emptyFirst: Bool) async throws -> Bool {
+    /// only touches the entry slot is not ready (the app never feeds it; doing so stalled a read). After a
+    /// page the sensor reads empty at once, as in the app's captures. Returns false on timeout.
+    private func waitForSheet(_ stream: any VENSStream, timeout: Duration) async throws -> Bool {
         let deadline = ContinuousClock.now + timeout
-        var sawEmpty = !emptyFirst
         while true {
             let status = try await command(stream, VENS.Command.hardwareStatus, inputLength: 0x20)
             guard status.isGood else { throw ScannerError.unexpectedStatus("HardwareStatus", status.status) }
             switch VENS.iX100SheetReady(status.data) {
-            case true?: if sawEmpty { return true }
-            case false?: sawEmpty = true
+            case true?: return true
+            case false?: break
             case nil: throw ScannerError.protocolError(.truncated(expected: 3, actual: status.data.count))
             }
             if ContinuousClock.now >= deadline { return false }
@@ -289,8 +325,8 @@ public actor WiFiScanner {
                 image += piece.bytes
             } else {
                 let bytes = Array(piece.bytes)
-                guard let prefix = VENS.iX100ContinuationPrefixLength(image), bytes.count >= prefix,
-                      bytes[2..<prefix] == image[2..<prefix]
+                guard let prefix = VENS.iX100ContinuationPrefixLength(image), prefix >= 2,
+                      image.count >= prefix, bytes.count >= prefix, bytes[2..<prefix] == image[2..<prefix]
                 else { throw ScannerError.commandFailed("ReadImage: a continuation read in an unknown layout", nil) }
                 image += bytes[prefix...]
             }
@@ -366,4 +402,30 @@ public actor WiFiScanner {
         }
         return sense
     }
+}
+
+/// The heartbeat's current socket, which the heartbeat task replaces if it closes.
+final class SocketHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: any VENSDatagramSocket
+
+    init(_ socket: any VENSDatagramSocket) {
+        current = socket
+    }
+
+    var socket: any VENSDatagramSocket {
+        get { lock.lock(); defer { lock.unlock() }; return current }
+        set { lock.lock(); current = newValue; lock.unlock() }
+    }
+}
+
+/// Closes whichever socket the heartbeat holds at the end.
+struct HolderSocket: VENSDatagramSocket {
+    let holder: SocketHolder
+    init(_ holder: SocketHolder) { self.holder = holder }
+    var localIPv4: [UInt8] { holder.socket.localIPv4 }
+    var localPort: UInt16 { holder.socket.localPort }
+    func send(_ bytes: [UInt8]) async throws { try await holder.socket.send(bytes) }
+    func receive(timeout: Duration) async throws -> [UInt8]? { try await holder.socket.receive(timeout: timeout) }
+    func close() async { await holder.socket.close() }
 }

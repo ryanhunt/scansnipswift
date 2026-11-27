@@ -22,19 +22,28 @@ public enum ScannerDiscovery {
     /// Probes the scanner every `interval` until it answers. A sleeping scanner can take several seconds.
     public static func find(using transport: any VENSTransport, timeout: Duration = .seconds(10),
                             interval: Duration = .seconds(1)) async throws -> DiscoveredScanner {
-        let socket = try await transport.datagramSocket(port: VENS.discoveryPort)
-        // The scanner answers a probe without the client's MAC, so none is sent.
-        let probe = VENS.probe(hostIP: socket.localIPv4, hostMAC: [UInt8](repeating: 0, count: 6),
-                               replyPort: socket.localPort)
+        var socket = try await transport.datagramSocket(port: VENS.discoveryPort)
         let deadline = ContinuousClock.now + timeout
         do {
             while ContinuousClock.now < deadline {
-                try await socket.send(probe)
-                while let reply = await socket.receive(timeout: interval) {
-                    if let announcement = VENS.Announcement(reply) {
-                        await socket.close()
-                        return DiscoveredScanner(announcement: announcement, localIPv4: socket.localIPv4)
+                // The scanner answers a probe without the client's MAC, so none is sent.
+                let probe = VENS.probe(hostIP: socket.localIPv4, hostMAC: [UInt8](repeating: 0, count: 6),
+                                       replyPort: socket.localPort)
+                try? await socket.send(probe)
+                do {
+                    while let reply = try await socket.receive(timeout: interval) {
+                        if let announcement = VENS.Announcement(reply) {
+                            await socket.close()
+                            return DiscoveredScanner(announcement: announcement, localIPv4: socket.localIPv4)
+                        }
                     }
+                } catch let error as ScannerError {
+                    // The socket closed (for example an ICMP "unreachable" while the scanner wakes): open a new
+                    // one after the usual pause, rather than probing again into a socket that cannot hear.
+                    guard case .connectionClosed = error else { throw error }
+                    await socket.close()
+                    try await Task.sleep(for: interval)
+                    socket = try await transport.datagramSocket(port: VENS.discoveryPort)
                 }
                 try Task.checkCancellation()
             }
