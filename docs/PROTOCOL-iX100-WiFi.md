@@ -202,7 +202,13 @@ On 2026-11-27 the demo app (`Examples/ScanSnipDemo`) ran the same `ScanSnipScann
 Max with iOS 27.2.1: it found the iX100 at its address 2.6 s after launch, registered as a mobile client,
 scanned a page (a 61 KB grey JPEG at 200 dpi), ended the job and released the scanner. The app declares
 `NSLocalNetworkUsageDescription` and needs no entitlement for a scanner at a known address. Broadcast
-discovery and background scanning were not tried.
+discovery and background scanning were not tried at first.
+
+Later the same day, with the scanner forgotten, the app found it **by broadcast** in 0.3 s: a development
+build with no `com.apple.developer.networking.multicast` entitlement sent the discovery probe to the subnet
+broadcast address and received the scanner's (unicast) reply. On the next launch it found the scanner at the
+remembered address in 0.1 s. Whether an App Store build behaves the same was not checked. From the Mac,
+probing each address on the /24 one by one (the fallback where a broadcast is refused) also found it.
 
 ## Sheets, blank pages and large pages
 

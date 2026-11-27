@@ -52,7 +52,7 @@ local: scans and dumps can hold documents, so keep them out of the repo.
 | `Sources/ScanSnipProtocol/SCSISense.swift` | Sense data and paper problems, shared by USB and Wi-Fi |
 | `Sources/ScanSnipProtocol/ScanSnapModel.swift` | The models this package knows: USB IDs, duplex, Wi-Fi protocol |
 | `Sources/ScanSnipProtocol/VENSiX100.swift` | iX100 scan settings, the sheet-loaded bit, joining multi-read pages |
-| `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery, the `WiFiScanner` actor |
+| `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery (`ScannerDiscovery`, BSD-socket `BroadcastBrowser`), the `WiFiScanner` actor |
 | `Tests/ScanSnipScannerTests/SimulatedScanner.swift` | An in-memory iX100 that keeps the rules learned on hardware; extend it when a new one is found |
 | `Tools/scansnip/` | A separate package: the command-line tool for checking against real scanners |
 | `Examples/ScanSnipDemo/` | A SwiftUI demo app (XcodeGen `project.yml`); team and bundle ID only in the git-ignored `Config/Local.xcconfig` |
@@ -78,6 +78,9 @@ local: scans and dumps can hold documents, so keep them out of the repo.
   several rounds: test with marked sheets, and do not read an empty page as a client bug.
 - **iX100: big pages come in several reads,** each after the first starting with 43 bytes to drop
   (`VENS.iX100ContinuationPrefixLength`); the chunk number stays 0.
+- **Discovery without an address works on iOS.** Network.framework cannot broadcast, so `BroadcastBrowser` uses
+  BSD sockets. A development build on iOS 27.2.1 broadcast without the multicast entitlement; where a broadcast
+  is refused, the browser probes each address on the subnet (unicast needs no entitlement).
 - **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second
   closes the connection with no answer, which looks like a protocol error. It cost three wrong guesses.
 - **The client MAC is the session identity, but need not be real.** A registration starts a reservation

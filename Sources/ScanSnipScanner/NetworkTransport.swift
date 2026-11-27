@@ -42,6 +42,8 @@ final class NetworkConnection: @unchecked Sendable {
     func start(timeout: Duration, onClose: @escaping @Sendable (ScannerError) -> Void) async throws {
         let once = OnceFlag()
         let lastWaiting = LockedBox<String?>(nil)
+        // Cancelling the task cancels the connection, which ends the wait through `.cancelled`.
+        try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.stateUpdateHandler = { state in
                 switch state {
@@ -76,6 +78,9 @@ final class NetworkConnection: @unchecked Sendable {
                     }
                 }
             }
+        }
+        } onCancel: { [connection] in
+            connection.cancel()
         }
     }
 

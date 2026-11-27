@@ -21,6 +21,10 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
   address, `WiFiScanner` (mobile registration, heartbeats, one job per loaded sheet, multi-read pages,
   sheets that come back empty, always ending the job and releasing), a simulated iX100 for tests, and the
   `scansnip` tool. Checked from a Mac on 2026-11-27.
+- **Discovery without an address [HW]:** `BroadcastBrowser` (BSD-socket broadcast, probing each address
+  where a broadcast is refused) and `ScannerDiscovery.locate` with `RememberedScanner` (last address first,
+  then a search, matched by name). Checked from the Mac (broadcast, one-by-one probing, remembered address)
+  and the iPhone (broadcast without the multicast entitlement, remembered address), 2026-11-28.
 - **iOS spike [HW]:** `Examples/ScanSnipDemo`, a SwiftUI app on `ScanSnipScanner`, found the iX100 at its
   address and scanned a page on an iPhone 15 Pro Max (iOS 27.2.1, 2026-11-27), with local-network access
   allowed: no pairing, no real MAC, no entitlement needed for a known address.
@@ -40,13 +44,12 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    product IDs with `system_profiler SPUSBHostDataType`. Record results in
    `docs/PROTOCOL-iX500-WiFi.md` ("Notes from scansnipswift").
 2. **Wi-Fi client, the rest:** the iX500's scan sequence (two sides, `E9`, image information, `D6` on a new
-   connection) once it is back on the desk; broadcast discovery (BSD sockets; on iOS the multicast
-   entitlement); following a scanner to a new address; registering as a paired host (`VENS.hostID`) for
+   connection) once it is back on the desk; registering as a paired host (`VENS.hostID`) for
    Macs paired by ScanSnap Home; whether a `D4` byte controls the empty blank-sheet reads (capture the app
    with blank-page removal off); a `status` command in `scansnip`.
-3. **iOS, the rest:** finding the scanner without typing its address (the iX100 advertises no Bonjour
-   service, so broadcast discovery with the multicast entitlement, or remembering the last address);
-   scanning while the app is in the background (not tried); an iPad run; CI building the demo app.
+3. **iOS, the rest:** scanning while the app is in the background (not tried); an iPad run; whether an App
+   Store build can broadcast without the multicast entitlement (a development build could); CI building the
+   demo app.
 4. **USB transport on macOS** (IOUSBHost, no libusb) **[HW]**: the 31-byte command wrapper (byte 0 `0x43`,
    CDB at 0x13), 13-byte status, REQUEST SENSE on a non-zero status, and the iX500 command sequence (SET
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's

@@ -3,8 +3,12 @@ import ScanSnipProtocol
 import ScanSnipScanner
 
 let usage = """
-    usage: scansnip discover <scanner address>
-           scansnip scan <scanner address> [options]
+    usage: scansnip discover [<scanner address>]
+           scansnip scan [<scanner address>] [options]
+
+    Without an address, discover searches the local networks (broadcast) and lists every scanner, and scan
+    looks for the scanner it used last (remembered in ~/Library/Application Support/scansnip), then searches.
+    discover --probe-subnet probes each address on the subnet instead of broadcasting.
 
     scan options:
       --color auto|color|gray|bw       colour mode (default auto)
@@ -36,24 +40,54 @@ func describe(_ scanner: DiscoveredScanner) -> String {
     let model = a.knownModel.map { "\($0)" } ?? "\(a.model) (not supported)"
     let ip = a.ipAddress.map(String.init).joined(separator: ".")
     let local = scanner.localIPv4.map(String.init).joined(separator: ".")
-    return "\(model) at \(ip), interface version \(a.interfaceVersion), "
+    let how = switch scanner.method {
+    case .address: "at its known address"
+    case .broadcast: "by broadcast"
+    case .subnetProbe: "by probing the subnet"
+    }
+    return "\(model) at \(ip), found \(how), interface version \(a.interfaceVersion), "
         + "\(a.hasRegisteredHost ? "a host is registered" : "no host registered"); this Mac is \(local)"
 }
 
 setvbuf(stdout, nil, _IOLBF, 0)
 var arguments = Array(CommandLine.arguments.dropFirst())
-guard arguments.count >= 2 else { print(usage); exit(2) }
+guard !arguments.isEmpty else { print(usage); exit(2) }
 let verb = arguments.removeFirst()
-let network = NetworkTransport(host: arguments.removeFirst())
+let givenHost = arguments.first.flatMap { $0.hasPrefix("--") ? nil : $0 }
+if givenHost != nil { arguments.removeFirst() }
 let dumpDirectory = option("--dump", in: arguments).map { URL(fileURLWithPath: $0) }
 if let dumpDirectory { try? FileManager.default.createDirectory(at: dumpDirectory, withIntermediateDirectories: true) }
-let transport: any VENSTransport = arguments.contains("--trace")
-    ? TracingTransport(base: network, dumpDirectory: dumpDirectory) : network
+
+let tracing = arguments.contains("--trace")
+
+@MainActor func makeTransport(_ host: String) -> any VENSTransport {
+    let network = NetworkTransport(host: host)
+    return tracing ? TracingTransport(base: network, dumpDirectory: dumpDirectory) : network
+}
+
+/// The scanner used last, kept on this Mac only (its name holds the serial number).
+let memoryFile = URL.applicationSupportDirectory.appending(path: "scansnip/scanner.json")
+
+func rememberedScanner() -> RememberedScanner? {
+    (try? Data(contentsOf: memoryFile)).flatMap { try? JSONDecoder().decode(RememberedScanner.self, from: $0) }
+}
+
+func remember(_ scanner: DiscoveredScanner) {
+    try? FileManager.default.createDirectory(at: memoryFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? JSONEncoder().encode(scanner.remembered).write(to: memoryFile)
+}
 
 do {
     switch verb {
     case "discover":
-        print(describe(try await ScannerDiscovery.find(using: transport)))
+        if let host = givenHost {
+            print(describe(try await ScannerDiscovery.find(using: makeTransport(host))))
+        } else {
+            let browser = BroadcastBrowser(alwaysProbeSubnet: arguments.contains("--probe-subnet"))
+            let found = try await browser.browse(timeout: .seconds(5))
+            if found.isEmpty { print("No scanner answered.") }
+            for scanner in found { print(describe(scanner)) }
+        }
 
     case "scan":
         var parameters = VENS.IX100ScanParameters()
@@ -79,8 +113,14 @@ do {
         let directory = URL(fileURLWithPath: option("--out", in: arguments) ?? ".")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        let scanner = try await ScannerDiscovery.find(using: transport)
+        let scanner = if let host = givenHost {
+            try await ScannerDiscovery.find(using: makeTransport(host))
+        } else {
+            try await ScannerDiscovery.locate(remembered: rememberedScanner())
+        }
         print(describe(scanner))
+        remember(scanner)
+        let transport = makeTransport(scanner.host)
         var configuration = WiFiScanner.Configuration(clientMAC: WiFiScanner.Configuration.randomClientMAC(),
                                                       password: option("--password", in: arguments))
         if let seconds = option("--next-sheet", in: arguments) {
