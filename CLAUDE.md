@@ -56,6 +56,9 @@ Once the package has more than one product the Xcode scheme becomes `ScanSnip-Pa
 - **Mobile registrations skip the host table.** The ScanSnap iOS app registers with reserve mode 1 (body
   offset 4) and a zero host ID, and the scanner checks only the password (`Registrant.mobile`). Reserve mode
   0 without pairing gets −6. Checked on the iX100 (firmware 0V00); not yet on the iX500.
+- **Register before any other control command, and always end a job.** The iX100 closes a status request
+  sent before registering. A job released without `D6` leaves it answering −4 (busy) to everyone until it is
+  power-cycled.
 - **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second
   closes the connection with no answer, which looks like a protocol error. It cost three wrong guesses.
 - **The client MAC is the session identity, but need not be real.** A registration starts a reservation

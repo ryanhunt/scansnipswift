@@ -17,6 +17,8 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
 - **Model table** with USB IDs for the iX500, iX500 EE and iX100.
 - **iX100 scan settings:** `VENS.iX100ParameterBlock` for automatic, colour, grey and black-and-white,
   150/200/300 dpi and A4, matched byte for byte against the iOS app's blocks.
+- **First scans from a Mac [HW]:** automatic, colour, grey and black-and-white pages from the iX100 through
+  `ScanSnipProtocol` alone (a throwaway tool), each matching the iOS app's image.
 - **iX100 over Wi-Fi, first look [HW]:** it answers `VENS` discovery and accepts mobile registrations
   (`Registrant.mobile`, password only); a capture of the ScanSnap iOS app gave its scan sequence. See
   `docs/PROTOCOL-iX100-WiFi.md`.
@@ -41,31 +43,30 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    - per-model scan sequences: the iX500's, and the iX100's (`D8`, a 128-byte `D4`, `D5`, `E0`, one read per
      page, `D6` on the same connection);
    - an actor session for the scan channel that runs one command at a time, reads frames with
-     `VENS.frameLength`, and always ends the job (`D6` on a new connection) and releases (control `0x12`),
-     including on cancellation;
+     `VENS.frameLength`, and always ends the job (`D6`: on a new connection on the iX500, the same one on the
+     iX100) and releases (control `0x12`), including on errors and cancellation. A job left without `D6`
+     keeps the iX100 busy until it is power-cycled;
+   - before waiting for the next sheet, wait for the feeder to read empty (`hopperHasPaper` false);
    - a page stream that yields JPEGs and starts a new job every 120 sheets;
    - a simulated scanner for tests, enforcing the one-client rule and the release order;
    - a `scansnip` CLI (`discover`, `status`, `scan`) for checking against hardware.
    References: Scan's `VENSNetwork.swift` and `FujitsuScanSnapWiFiDriver.swift` (MIT; adapt, removing
    UserDefaults and app types); open-scansnap's `discovery.py` and `scanner.py` (MIT) for discovery, the host
    ID and following a scanner to a new address. Its Wi-Fi transport is in its GPL SANE fork: facts only.
-3. **First scan from a Mac [HW]:** drive the iX100 with `VENS.iX100ParameterBlock` (mobile registration,
-   `D8`, `D4`, `D5`, `E0`, read, `D6`, release) from a throwaway script or the CLI, and check each colour
-   mode returns the image the app got.
-4. **iOS spike [HW]:** run the client from an iPhone. The protocol side is answered (a mobile registration
+3. **iOS spike [HW]:** run the client from an iPhone. The protocol side is answered (a mobile registration
    needs only the password, any stable MAC works); what is left is the local-network permission, broadcast
    discovery (the multicast entitlement, or a known address), and running in the foreground only.
-5. **USB transport on macOS** (IOUSBHost, no libusb) **[HW]**: the 31-byte command wrapper (byte 0 `0x43`,
+4. **USB transport on macOS** (IOUSBHost, no libusb) **[HW]**: the 31-byte command wrapper (byte 0 `0x43`,
    CDB at 0x13), 13-byte status, REQUEST SENSE on a non-zero status, and the iX500 command sequence (SET
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's
    `FujitsuSCSIOverUSB/` and SANE's documentation; **write the code fresh**, since parts of Scan's USB layer
    are GPL-derived. Hardware JPEG gives one stream per side on the iX500.
-6. **iX100 over USB [HW]:** start from the iX500 command set without duplex and the back window; confirm
+5. **iX100 over USB [HW]:** start from the iX500 command set without duplex and the back window; confirm
    INQUIRY, the VPD page and resolutions on hardware.
-7. **Pairing and Wi-Fi setup over USB [HW]:** SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
+6. **Pairing and Wi-Fi setup over USB [HW]:** SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
    ADATA`, `REG HOSTID DATA `, `SETUP NET …`), per open-scansnap's notes. Pairing removes every other
    computer, so the API must say so. Lets an app pair a Mac without ScanSnap Home.
-8. **Scan button:** UDP notices over Wi-Fi (`VENS.Notice`), hardware-status polling over USB (byte 4, mask
+7. **Scan button:** UDP notices over Wi-Fi (`VENS.Notice`), hardware-status polling over USB (byte 4, mask
    0x21 on the iX500, per Scan).
 
 ## Later

@@ -7,8 +7,9 @@ transport are next.
 This is a library, not an app: it has no UI. Apps add it as a Swift package and build their own interface on
 top.
 
-> **Status: early.** On hardware so far: iX100 discovery and registration over Wi-Fi, and a capture of the
-> ScanSnap iOS app scanning with it. Nothing has scanned through this package yet. The maintainer tests with a
+> **Status: early.** On hardware so far: iX100 discovery, registration and scanning over Wi-Fi. A throwaway
+> Mac tool built on `ScanSnipProtocol` scanned automatic, colour, grey and black-and-white pages that match
+> the ScanSnap iOS app's. There is no ready-made network client yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 

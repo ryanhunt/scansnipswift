@@ -34,7 +34,9 @@ public enum VENS {
     ///
     /// Each command gets its own connection to `controlPort`. The scanner sends a 16-byte greeting on
     /// connect; send the command as soon as it arrives. An iX100 left waiting about a second closes the
-    /// connection without answering.
+    /// connection without answering, and so does a command other than `register` sent before registering.
+    /// Before `release`, end any job with `Command.endJob`: an iX100 released mid-job answers −4 (busy) to
+    /// every client until it is power-cycled.
     public enum ControlCommand: UInt32, Sendable {
         /// Run a SCSI command on the scan channel.
         case scsi = 0x01

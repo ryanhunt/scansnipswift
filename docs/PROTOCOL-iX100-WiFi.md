@@ -169,13 +169,41 @@ So the iX100 crops the page on the scanner when the size is automatic, and with 
 for the blank sheets. The iX500, by contrast, always sends whole-area colour JPEGs. Whether pages need
 rotating was not checked (the sheets were blank).
 
+## Scanning from a Mac with this package
+
+On 2026-11-27 a throwaway Mac tool that used only `ScanSnipProtocol` for the wire format scanned four blank
+sheets from the iX100, one job each. It discovered the scanner, registered with `Registrant.mobile`, then sent
+`D8`, `iX100ParameterBlock`, `D5`, polled `C2` until a sheet was in, then `E0`, one read, `D6`, and released.
+Heartbeats went every 5 s.
+
+| Settings | Image |
+|---|---|
+| automatic | grey JPEG, 1647 × 2316 at 200 dpi |
+| colour | colour JPEG, 1641 × 2315 at 200 dpi |
+| grey | grey JPEG, 1641 × 2319 at 200 dpi |
+| black and white | Group 4 TIFF, 3296 × 4636 at 400 dpi |
+
+Each matched what the iOS app got with the same setting. Each image came in one read with end-of-medium
+sense. Lessons:
+
+- **Register before any other control command.** A status request (0x30) sent before registering got the
+  connection closed with no answer; after registering it answered.
+- **An unfinished job keeps the scanner busy.** One scan polled `C2` only 3 s after the previous sheet and fed
+  at once; the read then got no answer in 15 s. The tool released (0x12) but never sent `D6`, and from then on
+  every registration, from any client MAC, got −4 (busy) until the scanner was turned off and on again.
+  Always send `D6` before releasing, even after an error.
+- **Wait for the feeder to read empty before waiting for the next sheet.** The stall above was most likely
+  the previous sheet still showing in `C2`. Waiting for an empty reading first, and allowing 60 s for the
+  read, gave clean scans after that.
+- The status word (0x30) read 2 right after power-on and 3 after a scan.
+
 ## Open questions
 
 1. `D4` combinations not captured: fixed colour with a fixed resolution, black and white at a fixed
    resolution, page sizes other than A4, and the meaning of the constant bytes.
 2. Whether the iX500 accepts a mobile registration (reserve mode 1) the same way.
 3. What −6 means exactly, and what the iX100 returns to a paired host.
-4. The discovery state word `0x00800007`, and the `SAV2` probe.
+4. The discovery state word `0x00800007`, the `SAV2` probe, and status word 2 versus 3.
 5. Control command 0x40 and its other opcodes.
 6. The iX100's own access-point mode (the scanner as the network).
 7. USB: the USB ID (`04C5:13F4`, from Scan) and INQUIRY over USB.
