@@ -61,6 +61,9 @@ private func announcement(name: String = "iX500-A0XX012345", hostID: [UInt8] = [
     @Test func announcementWithoutHostOrSerial() throws {
         let info = try #require(VENS.Announcement(announcement(name: "Office", hostID: [0, 0, 0, 0, 0, 0, 0, 0])))
         #expect(!info.hasRegisteredHost)
+        // An idle iX100 announces an all-FF host ID (seen on hardware, 2026-11-27).
+        let idle = try #require(VENS.Announcement(announcement(hostID: [UInt8](repeating: 0xFF, count: 8))))
+        #expect(!idle.hasRegisteredHost)
         #expect(info.serialNumber == nil)
         #expect(info.factoryPassword == nil)
     }

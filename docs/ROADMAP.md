@@ -17,6 +17,10 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
 - **Model table** with USB IDs for the iX500, iX500 EE and iX100.
 - **iX100 scan settings:** `VENS.iX100ParameterBlock` for automatic, colour, grey and black-and-white,
   150/200/300 dpi and A4, matched byte for byte against the iOS app's blocks.
+- **Wi-Fi client for the iX100 [HW]** (`ScanSnipScanner`): Network.framework transport, discovery at a known
+  address, `WiFiScanner` (mobile registration, heartbeats, one job per loaded sheet, multi-read pages,
+  removed blank sheets, always ending the job and releasing), a simulated iX100 for tests, and the
+  `scansnip` tool. Checked from a Mac on 2026-11-27.
 - **First scans from a Mac [HW]:** automatic, colour, grey and black-and-white pages from the iX100 through
   `ScanSnipProtocol` alone (a throwaway tool), each matching the iOS app's image.
 - **iX100 over Wi-Fi, first look [HW]:** it answers `VENS` discovery and accepts mobile registrations
@@ -32,27 +36,11 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    client MAC works; time how long a reservation lasts without heartbeats. On both scanners: confirm the USB
    product IDs with `system_profiler SPUSBHostDataType`. Record results in
    `docs/PROTOCOL-iX500-WiFi.md` ("Notes from scansnipswift").
-2. **Wi-Fi client for the iX500 and iX100** (new target `ScanSnipScanner`, Network.framework), tried first
-   on the iX100:
-   - UDP discovery (broadcast plus known addresses; on iOS, broadcast needs the multicast entitlement) and
-     a heartbeat at least every 10 s while a session is open;
-   - a stable, locally administered client MAC per host (the scanner keys sessions to it);
-   - the host ID from the real en1/en0 MAC through SystemConfiguration (macOS);
-   - registration on the control channel, mobile by default, sending each command as soon as the greeting
-     arrives;
-   - per-model scan sequences: the iX500's, and the iX100's (`D8`, a 128-byte `D4`, `D5`, `E0`, one read per
-     page, `D6` on the same connection);
-   - an actor session for the scan channel that runs one command at a time, reads frames with
-     `VENS.frameLength`, and always ends the job (`D6`: on a new connection on the iX500, the same one on the
-     iX100) and releases (control `0x12`), including on errors and cancellation. A job left without `D6`
-     keeps the iX100 busy until it is power-cycled;
-   - before waiting for the next sheet, wait for the feeder to read empty (`hopperHasPaper` false);
-   - a page stream that yields JPEGs and starts a new job every 120 sheets;
-   - a simulated scanner for tests, enforcing the one-client rule and the release order;
-   - a `scansnip` CLI (`discover`, `status`, `scan`) for checking against hardware.
-   References: Scan's `VENSNetwork.swift` and `FujitsuScanSnapWiFiDriver.swift` (MIT; adapt, removing
-   UserDefaults and app types); open-scansnap's `discovery.py` and `scanner.py` (MIT) for discovery, the host
-   ID and following a scanner to a new address. Its Wi-Fi transport is in its GPL SANE fork: facts only.
+2. **Wi-Fi client, the rest:** the iX500's scan sequence (two sides, `E9`, image information, `D6` on a new
+   connection) once it is back on the desk; broadcast discovery (BSD sockets; on iOS the multicast
+   entitlement); following a scanner to a new address; registering as a paired host (`VENS.hostID`) for
+   Macs paired by ScanSnap Home; the `D4` byte that turns blank-page removal off (capture the app with it
+   off); a `status` command in `scansnip`.
 3. **iOS spike [HW]:** run the client from an iPhone. The protocol side is answered (a mobile registration
    needs only the password, any stable MAC works); what is left is the local-network permission, broadcast
    discovery (the multicast entitlement, or a known address), and running in the foreground only.

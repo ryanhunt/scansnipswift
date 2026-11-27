@@ -14,5 +14,7 @@ jobs:
         run: swift --version && xcodebuild -version
       - name: Build and test (macOS)
         run: swift test
+      - name: Build the scansnip tool (macOS)
+        run: swift build --package-path Tools/scansnip
       - name: Build (iOS Simulator)
-        run: xcodebuild -scheme ScanSnip -destination 'generic/platform=iOS Simulator' build
+        run: xcodebuild -scheme ScanSnip-Package -destination 'generic/platform=iOS Simulator' build

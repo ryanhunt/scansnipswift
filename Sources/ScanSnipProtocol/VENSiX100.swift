@@ -126,6 +126,33 @@ extension VENS {
         }
     }
 
+    /// Whether the iX100 has loaded a sheet and is ready to feed it, from a `Command.hardwareStatus` reply:
+    /// byte 2, bit 7 set. Byte 3 bit 7 clears as soon as a sheet reaches the entry slot (`hopperHasPaper`),
+    /// before the scanner has loaded it. The iOS app feeds only on `00 00 80 00`; a `startPaper` sent while
+    /// the sheet only touched the slot was followed by a read that did not answer within 15 s.
+    public static func iX100SheetReady(_ status: [UInt8]) -> Bool? {
+        status.count > 2 ? status[2] & 0x80 != 0 : nil
+    }
+
+    /// How many bytes to drop from the start of an iX100 continuation read, after its 2-byte `ImageChunk`
+    /// header. `imageStart` is the start of the JPEG so far.
+    ///
+    /// A page larger than one read comes in several: the first answers GOOD with a full buffer, the last
+    /// CHECK CONDITION with end of medium. Every read after the first starts with the same chunk header (the
+    /// chunk number stays 0), then two unknown bytes (`13 8f` seen) and a copy of the image's leading `APPn`
+    /// and comment segments, which are not image data: 43 bytes on firmware 0V00 (seen 2026-11-27). Keeping
+    /// them corrupts a band of the page. Returns nil for data that is not a JPEG.
+    public static func iX100ContinuationPrefixLength(_ imageStart: [UInt8]) -> Int? {
+        guard imageStart.count >= 4, imageStart[0] == 0xFF, imageStart[1] == 0xD8 else { return nil }
+        var offset = 2
+        while offset + 4 <= imageStart.count, imageStart[offset] == 0xFF,
+              (0xE0...0xEF).contains(imageStart[offset + 1]) || imageStart[offset + 1] == 0xFE {
+            offset += 2 + (Int(imageStart[offset + 2]) << 8 | Int(imageStart[offset + 3]))
+        }
+        // A segment that runs past the data means a malformed or truncated start.
+        return offset <= imageStart.count ? offset : nil
+    }
+
     /// The `D4` command for an iX100 parameter block of `length` bytes (80 or 128).
     public static func iX100SetParametersCommand(length: Int) -> [UInt8] {
         [0xD4, 0, 0, 0, UInt8(length & 0xFF), 0]
