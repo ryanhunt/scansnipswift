@@ -5,6 +5,7 @@ import ScanSnipScanner
 let usage = """
     usage: scansnip discover [<scanner address>]
            scansnip scan [<scanner address>] [options]
+           scansnip info [<scanner address>]       battery, firmware and page counts
 
     Without an address, discover searches the local networks (broadcast) and lists every scanner, and scan
     looks for the scanner it used last (remembered in ~/Library/Application Support/scansnip), then searches.
@@ -79,6 +80,29 @@ func remember(_ scanner: DiscoveredScanner) {
 
 do {
     switch verb {
+    case "info":
+        let scanner = if let host = givenHost {
+            try await ScannerDiscovery.find(using: makeTransport(host))
+        } else {
+            try await ScannerDiscovery.locate(remembered: rememberedScanner())
+        }
+        print(describe(scanner))
+        remember(scanner)
+        let client = WiFiScanner(transport: makeTransport(scanner.host), scanner: scanner,
+                                 configuration: .init(clientMAC: WiFiScanner.Configuration.randomClientMAC()))
+        let info = try await client.readInfo()
+        if let inquiry = info.inquiry {
+            print("product: \(inquiry.vendor) \(inquiry.product), firmware \(inquiry.revision)")
+        }
+        if let status = info.status {
+            let battery = status.batteryPercent.map { "\($0)%\(status.batteryLow ? " (low)" : "")" } ?? "no battery reported"
+            print("battery: \(battery); status word \(status.word)")
+        }
+        if let counters = info.counters {
+            print("pages scanned: \(counters.pages)"
+                  + (counters.others.isEmpty ? "" : "; other counters: \(counters.others.map(String.init).joined(separator: ", "))"))
+        }
+
     case "discover":
         if let host = givenHost {
             print(describe(try await ScannerDiscovery.find(using: makeTransport(host))))

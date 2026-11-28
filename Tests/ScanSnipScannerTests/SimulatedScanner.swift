@@ -21,6 +21,8 @@ actor SimulatedScanner {
     private(set) var stuck = false
 
     var model = "ScanSnap iX100"
+    var batteryPercent: UInt8 = 0x64
+    var pagesScanned: UInt32 = 206
     var serial = "A0XX012345"
     var password = "2345"
     /// Does not answer discovery (switched off, or not at this address).
@@ -69,6 +71,18 @@ actor SimulatedScanner {
 
     func setLateReads(_ late: Bool) {
         lateReads = late
+    }
+
+    /// Answers a read held back by `lateReads` now.
+    func releaseLateReply() {
+        if let late = lateReply {
+            lateReply = nil
+            late()
+        }
+    }
+
+    func setBattery(_ percent: UInt8) {
+        batteryPercent = percent
     }
 
     func setDropStatus(_ drop: Bool) {
@@ -136,7 +150,8 @@ actor SimulatedScanner {
             events.append("status")
             if dropStatus { return stream.closeFromScanner() }
             stream.inbound.append(VENS.bigEndian(UInt32(32)) + VENS.magic + [UInt8](repeating: 0, count: 8)
-                                  + [0, 0, 0, 3, 2, 0, 0x80, 0x64] + [UInt8](repeating: 0, count: 8))
+                                  + [0, 0, 0, 3, 2, 0, batteryPercent < 10 ? 0xC0 : 0x80, batteryPercent]
+                                  + [UInt8](repeating: 0, count: 8))
         default:
             stream.closeFromScanner()
         }
@@ -227,6 +242,19 @@ actor SimulatedScanner {
         case 0x03:
             events.append("03")
             reply(0, lastSense)
+        case 0x12:
+            events.append("INQUIRY")
+            var data = [UInt8](repeating: 0x20, count: 96)
+            data.replaceSubrange(0..<8, with: [0x06, 0, 0x02, 0x02, 0x5B, 0, 0, 0x10])
+            data.replaceSubrange(8..<16, with: Array("FUJITSU ".utf8))
+            let product = Array((model + "                ").utf8.prefix(16))
+            data.replaceSubrange(16..<32, with: product)
+            data.replaceSubrange(32..<36, with: Array("0V00".utf8))
+            reply(0, data)
+        case 0xD9:
+            events.append("D9")
+            let count = VENS.bigEndian(pagesScanned)
+            reply(0, count + count + count + [UInt8](repeating: 0, count: 20))
         case 0xD6:
             events.append("D6")
             if failEndJob { return checkCondition(key: 5, code: 0x2C, qualifier: 0) }

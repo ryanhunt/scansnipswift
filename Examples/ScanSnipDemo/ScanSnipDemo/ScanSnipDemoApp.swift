@@ -35,6 +35,7 @@ struct ContentView: View {
                     } else {
                         Button("Scan") { model.scan() }
                         Button("Search the network") { model.search() }
+                        Button("Scanner info") { model.readInfo() }
                     }
                 }
                 if !model.pages.isEmpty {

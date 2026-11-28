@@ -27,6 +27,10 @@ final class ScanModel: ObservableObject {
     @Published private(set) var busy = false
 
     private var scanTask: Task<Void, Never>?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundWatch: Task<Void, Never>?
+    private var activeClient: WiFiScanner?
+    private var observers: [NSObjectProtocol] = []
     private let started = Date()
     private let logFile = URL.documentsDirectory.appending(path: "scansnip-log.txt")
 
@@ -57,6 +61,66 @@ final class ScanModel: ObservableObject {
             write("Forgot the remembered scanner")
         }
         host = UserDefaults.standard.string(forKey: "scannerHost") ?? remembered?.host ?? ""
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil,
+                                            queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.enteredBackground() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil,
+                                            queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.write("Back in the foreground")
+                self?.endBackgroundTask()  // no longer needed; scanning carries on in the foreground
+            }
+        })
+    }
+
+    // MARK: Background
+
+    /// iOS suspends an app a few seconds after it leaves the screen, and a suspended app sends no heartbeats
+    /// and cannot end a job: an iX100 left mid-job stays busy until it is turned off and on. So a scan asks for
+    /// background time (about 30 s on iOS 27), keeps scanning in it, and with 15 s left finishes the sheet in
+    /// hand and stops (`stopAfterCurrentSheet`); only with 5 s left does it cancel outright.
+    private func enteredBackground() {
+        write("Went to the background")
+        guard busy, backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish the scan") { [weak self] in
+            MainActor.assumeIsolated {
+                self?.write("Background time is up")
+                self?.endBackgroundTask()
+            }
+        }
+        backgroundWatch = Task { [weak self] in
+            // backgroundTimeRemaining reads "unlimited" until the app is fully in the background.
+            try? await Task.sleep(for: .seconds(1))
+            guard let self else { return }
+            write(String(format: "Background time left: %.0f s", UIApplication.shared.backgroundTimeRemaining))
+            var finishing = false, cancelled = false
+            while self.busy, !Task.isCancelled {
+                let left = UIApplication.shared.backgroundTimeRemaining
+                if UIApplication.shared.applicationState == .background {
+                    if left < 15, !finishing {
+                        finishing = true
+                        write(String(format: "%.0f s left: finishing the sheet in hand, then stopping", left))
+                        await activeClient?.stopAfterCurrentSheet()
+                    }
+                    if left < 5, !cancelled {
+                        cancelled = true
+                        write(String(format: "%.0f s left: cancelling", left))
+                        stop()
+                    }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private func endBackgroundTask() {
+        backgroundWatch?.cancel()
+        backgroundWatch = nil
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 
     var autoScan: Bool { UserDefaults.standard.bool(forKey: "autoScan") }
@@ -71,12 +135,42 @@ final class ScanModel: ObservableObject {
             await run(host: host, mode: mode)
             busy = false
             UIApplication.shared.isIdleTimerDisabled = false
+            if backgroundTask != .invalid { write("Scan finished in the background") }
+            endBackgroundTask()
         }
     }
 
     func stop() {
         write("Stopping: ending the job and releasing the scanner")
         scanTask?.cancel()
+    }
+
+    /// Reads the battery level, firmware and page counts of the scanner found last (or at the typed address).
+    func readInfo() {
+        guard !busy else { return }
+        busy = true
+        let host = host.trimmingCharacters(in: .whitespaces)
+        scanTask = Task {
+            defer { busy = false }
+            let saved = remembered
+            let start = host.isEmpty ? saved : RememberedScanner(host: host, name: saved?.host == host ? saved?.name : nil)
+            do {
+                let scanner = try await ScannerDiscovery.locate(remembered: start)
+                remembered = scanner.remembered
+                self.host = scanner.host
+                let client = WiFiScanner(transport: NetworkTransport(host: scanner.host), scanner: scanner,
+                                         configuration: .init(clientMAC: clientMAC))
+                let info = try await client.readInfo()
+                if let inquiry = info.inquiry { write("\(inquiry.product), firmware \(inquiry.revision)") }
+                if let status = info.status {
+                    write("Battery " + (status.batteryPercent.map { "\($0)%" } ?? "not reported")
+                          + (status.batteryLow ? " (low)" : ""))
+                }
+                if let counters = info.counters { write("Pages scanned: \(counters.pages)") }
+            } catch {
+                write("Info failed: \(error)")
+            }
+        }
     }
 
     /// Lists every scanner on the local network, and picks the first supported one.
@@ -135,7 +229,12 @@ final class ScanModel: ObservableObject {
 
         var configuration = WiFiScanner.Configuration(clientMAC: clientMAC)
         configuration.nextSheetTimeout = .seconds(15)
+        configuration.onProgress = { [weak self] event in
+            Task { @MainActor in self?.write("  · \(ScanModel.describe(event))") }
+        }
         let client = WiFiScanner(transport: transport, scanner: scanner, configuration: configuration)
+        activeClient = client
+        defer { activeClient = nil }
         write("Put a sheet in the scanner (\(mode))")
         do {
             for try await page in await client.scan(.init(colorMode: mode)) {
@@ -155,6 +254,21 @@ final class ScanModel: ObservableObject {
         }
         await client.waitUntilIdle()
         write("Scanner released")
+    }
+
+    nonisolated static func describe(_ event: WiFiScanner.Progress) -> String {
+        switch event {
+        case .waitingForSheet: "waiting for a sheet"
+        case .sheetAtSlot: "sheet at the slot, not loaded yet"
+        case .sheetLoaded: "sheet loaded; feeding"
+        case .reading(let page): "reading page \(page + 1)"
+        case .pageRead(let page, let bytes): "page \(page + 1) read, \(bytes) bytes"
+        case .blankSheetSkipped: "the sheet came back with no image (blank?)"
+        case .finishing: "ending the job and releasing the scanner"
+        case .hardwareStatus(let bytes): "hardware status " + bytes.map { String(format: "%02x", $0) }.joined(separator: " ")
+        case .scannerStatus(let status):
+            "battery " + (status.batteryPercent.map { "\($0)%" } ?? "not reported") + (status.batteryLow ? " (low)" : "")
+        }
     }
 
     private func write(_ line: String) {

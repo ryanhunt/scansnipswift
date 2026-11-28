@@ -64,7 +64,7 @@ random locally administered one). The registration reply is 20 bytes with `00 06
 
 | Command | Body | Reply |
 |---|---|---|
-| 0x30 status | none | u32 3, then `02 00 80 64` (the last byte is probably the battery level, 100%) |
+| 0x30 status | none | u32 3 (2 right after power-on), then `02 00`, flags (`80`; `c0` with the battery at 6%, so 0x40 is probably "battery low") and the battery level in percent: `VENS.ControlStatus` |
 | 0x40 | 4100 bytes: `00 00 10 00`, opcode `0a 00 00 00`, … | 4100 bytes; with opcode 0x0A the ASCII version `02.02`. open-scansnap reads the same network-setup version over USB (`SETUP NET CMD`, opcode 0x0A), so 0x40 looks like network setup over Wi-Fi. Not explored further. |
 | 0x12 release | none | a bare 16-byte frame, status 0 |
 
@@ -207,8 +207,28 @@ discovery and background scanning were not tried at first.
 Later the same day, with the scanner forgotten, the app found it **by broadcast** in 0.3 s: a development
 build with no `com.apple.developer.networking.multicast` entitlement sent the discovery probe to the subnet
 broadcast address and received the scanner's (unicast) reply. On the next launch it found the scanner at the
-remembered address in 0.1 s. Whether an App Store build behaves the same was not checked. From the Mac,
-probing each address on the /24 one by one (the fallback where a broadcast is refused) also found it.
+remembered address in 0.1 s. Whether an App Store build behaves the same was not checked; Apple's DTS states
+that sending broadcasts needs the multicast entitlement and is enforced for BSD sockets from iOS 16, so do not
+rely on it. From the Mac, probing each address on the /24 one by one (the fallback where a broadcast is
+refused, or answered by nobody) also found it.
+
+**iPad.** The same app on an iPad Pro 12.9-inch (5th generation, iPadOS 27.2.1) found the scanner by broadcast
+and scanned a page. Once its Wi-Fi dropped after about two minutes ("Network is down"); the client ended the
+scan and released the scanner.
+
+**Background (iOS 27.2.1).** An app that asks for background time with `beginBackgroundTask` gets about 29 s
+(`backgroundTimeRemaining` reads "unlimited" until the app is fully in the background). In that time the scan
+carries on: a sheet put in after leaving the app was detected, loaded, fed and read, and a page being read
+when the app left completed. Stopping with 15 s left released the scanner cleanly (a cancel mid-read lost the
+page, hence `stopAfterCurrentSheet()`). A suspended app sends no heartbeats and cannot end a job, so never let
+one be suspended mid-job.
+
+**Battery.** Over an evening of scanning on battery the level fell from 100% to 6%. At 6% the scanner closed
+one session about 35 s after registering and stopped answering another after about 57 s; charged, it behaved
+normally. Check `ControlStatus.batteryPercent` before blaming the protocol.
+
+**Counters and identity.** INQUIRY answered `FUJITSU`, `ScanSnap iX100`, revision `0V00`; the three page
+counters (`D9`) were equal and rose with every sheet.
 
 ## Sheets, blank pages and large pages
 
