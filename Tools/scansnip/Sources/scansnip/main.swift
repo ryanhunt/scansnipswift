@@ -2,6 +2,7 @@ import Foundation
 import ScanSnipProtocol
 import ScanSnipScanner
 import ScanSnipUSB
+import ScanSnipCapture
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -12,6 +13,8 @@ let usage = """
            scansnip usb                             identify a ScanSnap connected over USB
            scansnip usb scan [options]              scan over USB (colour; --resolution 150|200|300|600,
                                                     --out, --next-sheet, --trace)
+           scansnip decode-usb <capture> [--bytes n]  the scanner commands in a USB capture (pcap or pcapng from
+                                                    USBPcap on Windows or usbmon on Linux)
 
     Without an address, discover searches the local networks (broadcast) and lists every scanner, and scan
     looks for the scanner it used last (remembered in ~/Library/Application Support/scansnip), then searches.
@@ -146,6 +149,16 @@ do {
             throw error
         }
         await channel.close()
+
+    case "decode-usb":
+        guard let path = givenHost else { fail("decode-usb needs a capture file") }
+        let bytes = Int(option("--bytes", in: arguments) ?? "16") ?? 16
+        let file = try [UInt8](Data(contentsOf: URL(fileURLWithPath: path)))
+        let exchanges = Transcript.exchanges(try CaptureFile.bulkTransfers(in: file))
+        if exchanges.isEmpty { print("no ScanSnap command blocks found") }
+        for (index, exchange) in exchanges.enumerated() {
+            print(String(format: "%4d ", index + 1) + Transcript.describe(exchange, bytesShown: bytes))
+        }
 
     case "info":
         let scanner = if let host = givenHost {

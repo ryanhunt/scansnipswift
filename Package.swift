@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "ScanSnipScanner", targets: ["ScanSnipScanner"]),
         // Talks to a scanner over USB: IOUSBHost on macOS. (Builds on iOS without the IOUSBHost channel.)
         .library(name: "ScanSnipUSB", targets: ["ScanSnipUSB"]),
+        // Reads USB captures (pcap/pcapng from USBPcap or Linux usbmon) and rebuilds the scanner commands in them,
+        // for learning what an app sends. Tooling, not needed by apps.
+        .library(name: "ScanSnipCapture", targets: ["ScanSnipCapture"]),
     ],
     targets: [
         .target(name: "ScanSnipProtocol"),
@@ -19,5 +22,7 @@ let package = Package(
         .testTarget(name: "ScanSnipScannerTests", dependencies: ["ScanSnipScanner"]),
         .target(name: "ScanSnipUSB", dependencies: ["ScanSnipProtocol", "ScanSnipScanner"]),
         .testTarget(name: "ScanSnipUSBTests", dependencies: ["ScanSnipUSB"]),
+        .target(name: "ScanSnipCapture", dependencies: ["ScanSnipProtocol"]),
+        .testTarget(name: "ScanSnipCaptureTests", dependencies: ["ScanSnipCapture"]),
     ]
 )

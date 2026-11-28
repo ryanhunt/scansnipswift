@@ -14,6 +14,7 @@ let package = Package(
                 .product(name: "ScanSnipProtocol", package: "scansnipswift"),
                 .product(name: "ScanSnipScanner", package: "scansnipswift"),
                 .product(name: "ScanSnipUSB", package: "scansnipswift"),
+                .product(name: "ScanSnipCapture", package: "scansnipswift"),
             ]
         ),
     ]
