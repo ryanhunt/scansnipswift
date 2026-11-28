@@ -163,7 +163,7 @@ do {
 
     case "decode-usb":
         guard let path = givenHost else { fail("decode-usb needs a capture file") }
-        let bytes = Int(option("--bytes", in: arguments) ?? "16") ?? 16
+        let bytes = max(0, Int(option("--bytes", in: arguments) ?? "16") ?? 16)
         let file = try [UInt8](Data(contentsOf: URL(fileURLWithPath: path)))
         let exchanges = Transcript.exchanges(try CaptureFile.bulkTransfers(in: file))
         if exchanges.isEmpty { print("no ScanSnap command blocks found") }

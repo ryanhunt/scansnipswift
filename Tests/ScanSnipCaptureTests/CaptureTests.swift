@@ -33,16 +33,30 @@ enum Build {
 
     /// A little-endian pcapng file with one interface.
     static func pcapng(linkType: Int, _ packets: [[UInt8]]) -> [UInt8] {
+        pcapng(linkTypes: [linkType], packets.map { (0, $0) })
+    }
+
+    /// A little-endian pcapng file with an interface per link type; each packet names its interface.
+    static func pcapng(linkTypes: [Int], _ packets: [(Int, [UInt8])]) -> [UInt8] {
         var file: [UInt8] = [0x0A, 0x0D, 0x0D, 0x0A] + le32(28) + [0x4D, 0x3C, 0x2B, 0x1A] + le16(1) + le16(0)
             + [UInt8](repeating: 0xFF, count: 8) + le32(28)
-        file += le32(1) + le32(20) + le16(linkType) + le16(0) + le32(0xFFFF) + le32(20)
-        for packet in packets {
+        for linkType in linkTypes {
+            file += le32(1) + le32(20) + le16(linkType) + le16(0) + le32(0xFFFF) + le32(20)
+        }
+        for (interface, packet) in packets {
             let padded = packet + [UInt8](repeating: 0, count: (4 - packet.count % 4) % 4)
             let length = 32 + padded.count
-            file += le32(6) + le32(length) + le32(0) + le32(0) + le32(0) + le32(packet.count) + le32(packet.count)
-                + padded + le32(length)
+            file += le32(6) + le32(length) + le32(interface) + le32(0) + le32(0) + le32(packet.count)
+                + le32(packet.count) + padded + le32(length)
         }
         return file
+    }
+
+    /// A pcapng simple packet block (interface 0).
+    static func simplePacket(_ packet: [UInt8]) -> [UInt8] {
+        let padded = packet + [UInt8](repeating: 0, count: (4 - packet.count % 4) % 4)
+        let length = 16 + padded.count
+        return le32(3) + le32(length) + le32(packet.count) + padded + le32(length)
     }
 
     static let inquiryData = [UInt8](repeating: 0x41, count: 0x60)
@@ -115,7 +129,55 @@ enum Build {
             try CaptureFile.bulkTransfers(in: Build.pcap(linkType: 1, [[0, 1, 2]]))
         }
         #expect(throws: CaptureFile.Failure.truncated) {
-            try CaptureFile.bulkTransfers(in: Array(Build.pcap(linkType: 249, Build.usbpcapSession).dropLast(3)))
+            try CaptureFile.bulkTransfers(in: Array(Build.pcap(linkType: 249, []).prefix(20)))
         }
+    }
+
+    @Test func otherInterfacesAreSkipped() throws {
+        // Ethernet on interface 0 (link type 1), the scanner on interface 1 (USBPcap), interleaved, as Wireshark
+        // writes a capture of several interfaces.
+        var packets: [(Int, [UInt8])] = [(0, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 1, 2])]
+        for (index, packet) in Build.usbpcapSession.enumerated() {
+            packets.append((1, packet))
+            if index == 3 { packets.append((0, [1, 2, 3, 4])) }
+        }
+        let transfers = try CaptureFile.bulkTransfers(in: Build.pcapng(linkTypes: [1, 249], packets))
+        #expect(Transcript.exchanges(transfers) == expected)
+    }
+
+    @Test func aCaptureCutOffKeepsWhatCameBefore() throws {
+        // The last status packet is cut short: both commands survive, the second without its status.
+        for file in [Build.pcap(linkType: 249, Build.usbpcapSession), Build.pcapng(linkType: 249, Build.usbpcapSession)] {
+            let exchanges = Transcript.exchanges(try CaptureFile.bulkTransfers(in: Array(file.dropLast(3))))
+            #expect(exchanges.count == 2)
+            #expect(exchanges[0] == expected[0])
+            #expect(exchanges[1].diagnosticCommand == "SETUP NET START " && exchanges[1].status == nil)
+        }
+    }
+
+    @Test func simplePacketBlocks() throws {
+        var file = Build.pcapng(linkType: 249, [])
+        for packet in Build.usbpcapSession { file += Build.simplePacket(packet) }
+        #expect(Transcript.exchanges(try CaptureFile.bulkTransfers(in: file)) == expected)
+    }
+
+    @Test func imageDataThatLooksLikeAStatusPacket() {
+        // A READ whose data arrives as 13 bytes starting 0x53 (a pixel value), then more data, then the real
+        // status (CHECK CONDITION, 2). The first 13 bytes are data because more IN data follows them.
+        let lookalike = [0x53] + [UInt8](repeating: 0x07, count: 12)
+        var status = Build.good
+        status[9] = 2
+        let read: [UInt8] = [0x28, 0, 0, 0, 0, 0, 0, 0, 0x20, 0]
+        let transfers = [
+            CaptureFile.Transfer(bus: 1, device: 5, endpoint: 0x02, data: FujitsuUSB.commandBlock(read)),
+            CaptureFile.Transfer(bus: 1, device: 5, endpoint: 0x81, data: lookalike),
+            CaptureFile.Transfer(bus: 1, device: 5, endpoint: 0x81, data: [1, 2, 3]),
+            CaptureFile.Transfer(bus: 1, device: 5, endpoint: 0x81, data: status),
+        ]
+        #expect(Transcript.exchanges(transfers) == [Transcript.Exchange(cdb: read, dataIn: lookalike + [1, 2, 3], status: 2)])
+    }
+
+    @Test func negativeByteCountsShowNothing() {
+        #expect(Transcript.describe(expected[0], bytesShown: -1) == "INQUIRY: 12 00 00 00 60 00, in 96: , status 0")
     }
 }

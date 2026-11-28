@@ -10,10 +10,13 @@
 ///   at 12, then the data after the header. Assumes a little-endian capturing machine.
 ///
 /// A bulk OUT transfer's data is taken from the host's submission, a bulk IN transfer's from its completion.
+/// Packets of other link types (another interface captured alongside) and malformed packets are skipped, and a
+/// file cut off mid-packet (a capture stopped while writing) gives the packets before the cut.
 public enum CaptureFile {
     public enum Failure: Error, Equatable, Sendable {
         case notACapture
         case truncated
+        /// No packet in the file has a USB link type this reader understands; the first link type is given.
         case unsupportedLinkType(UInt32)
     }
 
@@ -39,19 +42,20 @@ public enum CaptureFile {
     public static let linkTypeUSBPcap: UInt32 = 249
     public static let linkTypeUSBLinux: UInt32 = 189
     public static let linkTypeUSBLinuxMmapped: UInt32 = 220
+    static let supportedLinkTypes: Set<UInt32> = [linkTypeUSBPcap, linkTypeUSBLinux, linkTypeUSBLinuxMmapped]
 
     /// The bulk transfers in a capture, in order. Transfers without data are left out.
     public static func bulkTransfers(in file: [UInt8]) throws(Failure) -> [Transfer] {
-        var transfers: [Transfer] = []
-        for (linkType, packet) in try packets(in: file) {
-            if let transfer = try bulkTransfer(packet, linkType: linkType) { transfers.append(transfer) }
+        let packets = try packets(in: file)
+        if let first = packets.first, !packets.contains(where: { supportedLinkTypes.contains($0.0) }) {
+            throw .unsupportedLinkType(first.0)
         }
-        return transfers
+        return packets.compactMap { linkType, packet in bulkTransfer(packet, linkType: linkType) }
     }
 
     // MARK: Containers
 
-    /// Each packet with its link type.
+    /// Each packet with its link type, up to the end of the file or the first incomplete record.
     static func packets(in file: [UInt8]) throws(Failure) -> [(UInt32, [UInt8])] {
         guard file.count >= 4 else { throw .notACapture }
         let magic = Array(file[0..<4])
@@ -67,11 +71,10 @@ public enum CaptureFile {
         let linkType = reader.u32(20)
         var packets: [(UInt32, [UInt8])] = []
         var offset = 24
-        while offset < file.count {
-            guard offset + 16 <= file.count else { throw .truncated }
+        while offset + 16 <= file.count {
             let length = Int(reader.u32(offset + 8))
             let start = offset + 16
-            guard start + length <= file.count else { throw .truncated }
+            guard start + length <= file.count else { break }
             packets.append((linkType, Array(file[start..<start + length])))
             offset = start + length
         }
@@ -83,32 +86,38 @@ public enum CaptureFile {
         var interfaces: [UInt32] = []
         var reader = Reader(file, littleEndian: true)
         var offset = 0
-        while offset < file.count {
-            guard offset + 12 <= file.count else { throw .truncated }
+        while offset + 12 <= file.count {
             if Array(file[offset..<offset + 4]) == [0x0A, 0x0D, 0x0D, 0x0A] {
                 // Section header: the byte-order magic decides the section's byte order.
-                let byteOrder = Array(file[offset + 8..<offset + 12])
-                switch byteOrder {
+                switch Array(file[offset + 8..<offset + 12]) {
                 case [0x4D, 0x3C, 0x2B, 0x1A]: reader = Reader(file, littleEndian: true)
                 case [0x1A, 0x2B, 0x3C, 0x4D]: reader = Reader(file, littleEndian: false)
-                default: throw .notACapture
+                default: throw offset == 0 ? .notACapture : .truncated
                 }
                 interfaces = []
             }
             let type = reader.u32(offset)
             let length = Int(reader.u32(offset + 4))
-            guard length >= 12, offset + length <= file.count else { throw .truncated }
+            guard length >= 12, length % 4 == 0, offset + length <= file.count else { break }
             switch type {
-            case 1:
+            case 1 where length >= 20:
                 // Interface description: link type u16 at 8.
                 interfaces.append(UInt32(reader.u16(offset + 8)))
-            case 6:
-                // Enhanced packet: interface u32 at 8, captured length u32 at 20, data at 28.
-                guard length >= 32 else { throw .truncated }
+            case 6 where length >= 32:
+                // Enhanced packet: interface u32 at 8, captured length u32 at 20, data at 28, the block's length
+                // repeated in its last 4 bytes.
                 let interface = Int(reader.u32(offset + 8))
                 let captured = Int(reader.u32(offset + 20))
-                guard interface < interfaces.count, 28 + captured <= length else { throw .truncated }
-                packets.append((interfaces[interface], Array(file[offset + 28..<offset + 28 + captured])))
+                if interface < interfaces.count, 28 + captured + 4 <= length {
+                    packets.append((interfaces[interface], Array(file[offset + 28..<offset + 28 + captured])))
+                }
+            case 3 where length >= 16:
+                // Simple packet: interface 0, original length u32 at 8, data at 12 up to the snapshot length.
+                let original = Int(reader.u32(offset + 8))
+                let captured = min(original, length - 16)
+                if !interfaces.isEmpty {
+                    packets.append((interfaces[0], Array(file[offset + 12..<offset + 12 + captured])))
+                }
             default:
                 break
             }
@@ -119,14 +128,15 @@ public enum CaptureFile {
 
     // MARK: Link types
 
-    static func bulkTransfer(_ packet: [UInt8], linkType: UInt32) throws(Failure) -> Transfer? {
+    /// The bulk transfer in a packet, or nil for anything else: another transfer type, the empty half of a
+    /// transfer, a malformed packet, or a link type this reader does not understand.
+    static func bulkTransfer(_ packet: [UInt8], linkType: UInt32) -> Transfer? {
         let reader = Reader(packet, littleEndian: true)
         switch linkType {
         case linkTypeUSBPcap:
-            guard packet.count >= 27 else { throw .truncated }
+            guard packet.count >= 27 else { return nil }
             let headerLength = Int(reader.u16(0))
-            guard headerLength >= 27, headerLength <= packet.count else { throw .truncated }
-            guard packet[22] == 3 else { return nil }
+            guard headerLength >= 27, headerLength <= packet.count, packet[22] == 3 else { return nil }
             let fromDevice = packet[16] & 1 != 0
             let endpoint = packet[21]
             let data = Array(packet[headerLength...])
@@ -135,8 +145,7 @@ public enum CaptureFile {
             return Transfer(bus: Int(reader.u16(17)), device: Int(reader.u16(19)), endpoint: endpoint, data: data)
         case linkTypeUSBLinux, linkTypeUSBLinuxMmapped:
             let headerLength = linkType == linkTypeUSBLinux ? 48 : 64
-            guard packet.count >= headerLength else { throw .truncated }
-            guard packet[9] == 3 else { return nil }
+            guard packet.count >= headerLength, packet[9] == 3 else { return nil }
             let endpoint = packet[10]
             let isIn = endpoint & 0x80 != 0
             let event = packet[8]
@@ -145,7 +154,7 @@ public enum CaptureFile {
             guard !data.isEmpty else { return nil }
             return Transfer(bus: Int(reader.u16(12)), device: Int(packet[11]), endpoint: endpoint, data: data)
         default:
-            throw .unsupportedLinkType(linkType)
+            return nil
         }
     }
 }

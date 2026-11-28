@@ -48,17 +48,23 @@ public enum Transcript {
     }
 
     /// The exchanges with the device that sent command blocks (the first such device if there are several).
+    ///
+    /// A 13-byte IN transfer starting `0x53` is the status packet unless more IN data follows it before the
+    /// next command block: after a status the host always sends the next command, so an IN transfer straight
+    /// after means those 13 bytes were image data that happened to start with `0x53`.
     public static func exchanges(_ transfers: [CaptureFile.Transfer]) -> [Exchange] {
         guard let scanner = transfers.first(where: { !$0.isIn && FujitsuUSB.cdb(inCommandBlock: $0.data) != nil })
         else { return [] }
+        let own = transfers.filter { $0.bus == scanner.bus && $0.device == scanner.device }
         var exchanges: [Exchange] = []
         var current: Exchange?
-        for transfer in transfers where transfer.bus == scanner.bus && transfer.device == scanner.device {
+        for (index, transfer) in own.enumerated() {
             if !transfer.isIn, let cdb = FujitsuUSB.cdb(inCommandBlock: transfer.data) {
                 if let current { exchanges.append(current) }
                 current = Exchange(cdb: cdb)
-            } else if transfer.isIn, transfer.data.count == FujitsuUSB.statusPacketLength, transfer.data[0] == 0x53,
-                      let packet = FujitsuUSB.StatusPacket(transfer.data), current != nil {
+            } else if transfer.isIn, current != nil, transfer.data.count == FujitsuUSB.statusPacketLength,
+                      transfer.data[0] == 0x53, !(own.dropFirst(index + 1).first?.isIn ?? false),
+                      let packet = FujitsuUSB.StatusPacket(transfer.data) {
                 current?.status = packet.scsiStatus
                 exchanges.append(current!)
                 current = nil
@@ -74,6 +80,7 @@ public enum Transcript {
 
     /// One line per exchange: name, CDB, data out (the diagnostic name if any), data in, status.
     public static func describe(_ exchange: Exchange, bytesShown: Int = 16) -> String {
+        let bytesShown = max(0, bytesShown)
         var line = "\(exchange.name): \(hex(exchange.cdb))"
         if let command = exchange.diagnosticCommand {
             line += ", \"\(command)\""
