@@ -1,15 +1,16 @@
 # scansnipswift
 
 Open-source Swift packages for Fujitsu/Ricoh **ScanSnap** document scanners on iOS, iPadOS and macOS. It has the
-Wi-Fi protocol the iX500 and iX100 share, as pure tested wire formats, and a Wi-Fi client that scans from the
-iX100. A USB transport is next.
+Wi-Fi protocol the iX500 and iX100 share, as pure tested wire formats, a Wi-Fi client that scans from the
+iX100, and a USB client that scans from the iX100 on a Mac.
 
 This is a library, not an app: it has no UI. Apps add it as a Swift package and build their own interface on
 top.
 
 > **Status: early.** On hardware so far: the iX100 over Wi-Fi, scanning through `ScanSnipScanner` from a Mac
 > (automatic, colour, grey and black-and-white pages, and pages larger than one read) and from an iPhone
-> and an iPad (the demo app), including in the background. The client does not drive the iX500 yet. The maintainer tests with a
+> and an iPad (the demo app), including in the background; and the iX100 over USB from a Mac (`ScanSnipUSB`,
+> colour). The clients do not drive the iX500 yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -17,8 +18,8 @@ top.
 
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
-| iX500 (and iX500 EE) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | commands work (INQUIRY, status); scanning planned | scans with `WiFiScanner` (checked from a Mac, an iPhone and an iPad) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX500 (the iX500 EE is not yet checked on hardware) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
+| iX100 | scans in colour with `USBScanner` (macOS; ScanSnap Cloud mode off or Wi-Fi switched off) | scans with `WiFiScanner` (checked from a Mac, an iPhone and an iPad) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
@@ -26,6 +27,7 @@ top.
 |---|---|
 | `ScanSnipProtocol` | Wire formats only, no I/O: the Wi-Fi protocol of the iX500 and iX100 (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters for each model), SCSI sense data, and the model table (`ScanSnapModel`). |
 | `ScanSnipScanner` | Talks to a scanner over Wi-Fi: `ScannerDiscovery.locate` finds it (remembered address, then a broadcast search), `WiFiScanner` scans pages. iX100 only for now. |
+| `ScanSnipUSB` | Talks to a scanner over USB: `IOUSBHostChannel` opens it with Apple's IOUSBHost (macOS, no driver, no libusb), `USBScanner` scans pages as 8-bit RGB. iX100 only for now. |
 
 Requires iOS 16 / macOS 13 or later and Swift 6.
 
@@ -82,6 +84,24 @@ cannot be ended, the scanner is left to drop the session by itself rather than r
 would leave an iX100 busy until it is turned off and on. On iOS, add
 `NSLocalNetworkUsageDescription` to your Info.plist; a refused local-network permission shows up as
 `ScannerError.network`.
+
+Over USB on a Mac:
+
+```swift
+import ScanSnipUSB
+
+let channel = try IOUSBHostChannel.open()                          // the first ScanSnap on USB
+let scanner = USBScanner(channel: channel, configuration: .init(resolution: 300))
+for try await page in await scanner.scan() {
+    save(page.rgb, width: page.width, height: page.height)          // 8-bit RGB, top edge first
+}
+await channel.close()
+```
+
+An iX100 in ScanSnap Cloud mode (its Scan button purple) refuses to feed over USB: `scan` throws
+`ScannerError.paper` with `SCSISense.PaperProblem.heldByCloudOrMobile`. Turn Cloud mode off in ScanSnap Home's
+Scan window, or switch the scanner's Wi-Fi off. ScanSnap Home's background helper holds the USB connection
+while it runs, so quit ScanSnap Home first.
 
 The protocol layer underneath builds and parses packets without opening sockets:
 

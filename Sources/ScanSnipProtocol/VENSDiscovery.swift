@@ -26,11 +26,12 @@ extension VENS {
         public let ipAddress: [UInt8]
         /// 6 on iX500 firmware 0U00, 4 on 0M00. Sent back in the registration.
         public let interfaceVersion: UInt16
-        /// 0x30 on the iX500.
+        /// 0x30 on both the iX500 and the iX100, so not a model code.
         public let deviceType: UInt16
         public let macAddress: [UInt8]
         /// 4 while a host is registered, 1 after power-on or unplugging USB, 2 while connected over USB
-        /// (observed by ScanSnack; not fully understood).
+        /// (observed by ScanSnack; not fully understood). ScanSnap Manager's log names suggest these four bytes
+        /// are set mode, Wi-Fi mode, cloud status and device status (unverified).
         public let state: UInt32
         /// For example `iX500-A0XX012345`: the model and serial number, unless renamed (unverified).
         public let name: String

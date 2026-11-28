@@ -33,10 +33,12 @@ extension VENS {
         }
     }
 
-    /// The page counters (`Command.counters`, 0x20 bytes back): big-endian u32 values. The first is the
-    /// number of pages the scanner has fed in its life. On the iX500 the next two are probably the pick and
-    /// brake rollers' counts since they were last replaced (unverified); the iX100, which has no
-    /// replaceable rollers, reported three equal values.
+    /// The page counters (`Command.counters`, 0x20 bytes back): three big-endian u32 values, then 20 reserved
+    /// bytes. ScanSnap Manager calls the command GET CONSUMABLES INFO and shows a total page count and, per
+    /// model, the count since each consumable was last replaced: on the iX500 one roller set (pick and brake
+    /// roller; `ScanSnapModel.rollerSetReplacementSheets`). So `others` is most likely the roller set's count,
+    /// then a pad count the iX500 does not use; unverified on hardware. The iX100 has no consumables and
+    /// reported three equal values.
     public struct PageCounters: Sendable, Equatable {
         public let pages: UInt32
         public let others: [UInt32]

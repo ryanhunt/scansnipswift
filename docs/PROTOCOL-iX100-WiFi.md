@@ -65,7 +65,7 @@ random locally administered one). The registration reply is 20 bytes with `00 06
 | Command | Body | Reply |
 |---|---|---|
 | 0x30 status | none | u32 3 (2 right after power-on), then `02 00`, flags (`80`; `c0` with the battery at 6%, so 0x40 is probably "battery low") and the battery level in percent: `VENS.ControlStatus` |
-| 0x40 | 4100 bytes: `00 00 10 00`, opcode `0a 00 00 00`, … | 4100 bytes; with opcode 0x0A the ASCII version `02.02`. open-scansnap reads the same network-setup version over USB (`SETUP NET CMD`, opcode 0x0A), so 0x40 looks like network setup over Wi-Fi. Not explored further. |
+| 0x40 | 4100 bytes: a big-endian u32 length 0x1000, then a 4096-byte block starting with the opcode as a little-endian u32 (`0a 00 00 00`), … | 4100 bytes; with opcode 0x0A the ASCII version `02.02`. open-scansnap reads the same network-setup version over USB (`SETUP NET CMD`, opcode 0x0A). ScanSnap Manager calls 0x40 EXEC WIFI TOOL CMD (see "What ScanSnap Manager's files say"). Not explored further. |
 | 0x12 release | none | a bare 16-byte frame, status 0 |
 
 ## Scan channel (TCP 53218)
@@ -282,8 +282,140 @@ framework (no libusb):
 - Through a Thunderbolt dock the scanner did not enumerate at all; plugged straight into the Mac (micro-USB to
   USB-C) it did.
 
+### Scanning over USB, and ScanSnap Cloud
+
+A first USB scan (2026-11-29) ran the iX500's USB sequence (facts from Scan's driver). The iX100 accepted TEST
+UNIT READY, INQUIRY, the VPD page, the feeder select (`F1 00`), four MODE SELECT pages, SET WINDOW, the gamma
+table and lamp on (`F1 05`), but refused every command that moves paper with **sense 3/80/33**: the pre-read
+setup (`1D`, "SET PRE READMODE"), OBJECT POSITION feed (`31 01`) and halt (`31 04`), with or without a loaded
+sheet. The scanner was in **ScanSnap Cloud mode** (its Scan button lit purple, and pressing it sent the sheet to
+the cloud). Over USB the hardware status byte 4 read `80` with the lamp off and `00` with it on.
+
+**With ScanSnap Cloud off the scan works** (2026-11-29, the Scan button lit blue, ScanSnap Home quit): the same
+sequence fed the sheet and read it at 150 dpi in colour. After the sheet was loaded (byte 2 bit 7, as over Wi-Fi),
+in order: `F1 00`, `1D` pre-read (32 bytes), MODE SELECT pages `3C` (automatic length), `38` (multifeed off),
+`39`, `3A` (buffering off), SET WINDOW (one 64-byte descriptor: 150 dpi, colour, 8.5 × 14 in), SEND gamma, `F1
+05` lamp on, OBJECT POSITION `31 01` (feed), SCAN `1B`, then READ:
+
+- The pixel size read (`28 00 80 … 20`) gave 1274 × 2100, the window's size.
+- Image reads of 0x3F738 bytes (whole lines of RGB) came back full until the last, which ended with CHECK
+  CONDITION, sense 0/00/00 with end of medium and incorrect length set, and the information field the number
+  of bytes missing: 26 reads, 1767 lines, so the page length was found by the scanner (299 mm for an A4 sheet).
+- The samples are inverted (255 is black). Lines come in the order the sheet is fed: a later sheet marked
+  "top" and fed top edge first came out upright. (The first sheet came out upside down; it must have gone in
+  bottom first.)
+- A second OBJECT POSITION answered 3/80/03 (no paper): the end of the job.
+
+Byte 4 of the hardware status read `80` with no sheet and `00` once the sheet was being loaded.
+
+**ScanSnap Cloud mode is a setting kept on the scanner** (2026-11-29). ScanSnap Home switches it in its Scan
+window, and only with the scanner on USB; turning the scanner off and on does not change it. With it on, the
+Scan button lights purple and every command that moves paper answers 3/80/33. The light turns blue while a
+computer holds the scanner (ScanSnap Home open, or a `SETUP NET START` session over USB until `SETUP NET END`),
+but that alone does not lift the block: inside such a session the first setup command after loading a sheet
+still answered 3/80/33. With the scanner's **Wi-Fi switch off** it lit blue and scanned over USB normally, with
+this package's `USBScanner` (`scansnip usb scan`): 1274 × 605 at 150 dpi for a short card, the job ended
+cleanly. So for USB scanning, either turn Cloud mode off in ScanSnap Home or switch Wi-Fi off on the scanner.
+
+The setup session over USB: SEND DIAGNOSTIC (`1D 00 00 00 10 00`) with the 16 characters `SETUP NET START ` or
+`SETUP NET END   `, then RECEIVE DIAGNOSTIC RESULTS (`1C 00 00 00 40 00`); both answered GOOD, and the 64-byte
+result started `00` (success).
+
+ScanSnap Home's background helper (`SshResident`, started at login) holds the USB interface while it runs,
+so no other process can open it (`IOUSBHostInterface` cannot be created). Its Wi-Fi tool stops the helper
+before using USB; stopping it ourselves while it held the scanner left the scanner stuck (below).
+
+**Stuck after an aborted run.** A process that failed in the middle and sent its halt commands with long
+timeouts left the scanner accepting no transfers (every write timed out, `0xe00002d6`) though it stayed on
+the bus; clearing the endpoint halt did not help, and closing and reopening the feed guide (which turns it off
+and on) did. The first command after the scanner wakes can also fail once; a retry works.
+
+Names and messages in ScanSnap Manager 7.2.70's files (read 2026-11-29, for interoperability; no code read)
+point the same way: while the ScanSnap Cloud link is on, it will not scan over USB or Wi-Fi until that link is
+turned off, it checks whether the device is "cloud enabled" or "cloud occupied" from the hardware status, and it
+warns that a scanner can be taken over by a mobile device. So 3/80/33 most likely means "held by cloud or
+mobile use"; no table in the files maps sense codes to messages, so this is inferred, not proven. The same
+files name the registration results in an order that fits our codes (−2 password option, −3 wrong password,
+−4 already occupied, −6 host ID not registered, −7 wrong host ID), making −5 most likely "unsupported interface
+version"; name the status reply's fields (Wi-Fi status, battery status, battery level, Wi-Fi modes, signal
+strength); and log the discovery reply's fields in an order suggesting offset 36 holds four bytes: set mode,
+Wi-Fi mode, cloud status and device status.
+
+## What ScanSnap Manager's files say
+
+Facts read on 2026-11-29 from ScanSnap Manager 7.2.70 for Mac and its Wi-Fi setup tool, for interoperability:
+its help pages, string tables and property lists, and the names and type layouts left readable in its programs.
+No code was disassembled and the apps were not run. Layouts below are what those names say; anything not
+also seen on the wire is marked as such.
+
+**Consumables.** The scan-channel command `D9` is GET CONSUMABLES INFO: three u32 and 20 reserved bytes, which
+matches our 32-byte read. The iX500 has one consumable, the roller set (pick and brake roller), with a
+suggested replacement every 200,000 sheets (`ScanSnapModel.rollerSetReplacementSheets`); the window shows the
+total page count and the roller set count, each with its own reset. Models with a separate pad count a third
+value. The iX100 has no consumables (the window is not shown for it), which fits its three equal counters.
+A RESET CONSUMABLES INFO command takes one byte, probably which counter; its opcode is not in the files. Over
+USB the iX500 reads and clears the counts with SEND DIAGNOSTIC (`READ COUNT`, `READ COUNT CLR X`).
+
+**Capabilities** (help pages):
+
+| | iX500 | iX100 |
+|---|---|---|
+| Sides | duplex (default) | one side; "continue scanning" on by default |
+| Image quality, colour/grey | Normal 150, Better 200, Best 300, Excellent 600 dpi | same |
+| Image quality, black and white | 300, 400, 600, 1200 dpi | same |
+| Custom paper size | 50.8–216 × 50.8–360 mm | 25.4–216 × 25.4–360 mm |
+| Long pages | up to 863 mm: hold Scan 3 s or more, until it flashes | up to 863 mm |
+| Multifeed detection | ultrasonic | none |
+| Blank-page removal | on by default | on by default |
+
+Automatic quality picks Better for pages longer than 148 mm and Best for shorter ones; Excellent turns long-page
+scanning off. Whether the black-and-white resolutions come from the scanner or from the computer is not known.
+
+**Errors.** Manager distinguishes paper jam, cover open, no paper, double feed, paper protection, lamp,
+battery not installed, battery temperature, and the generic invalid-command and transfer errors. Its scanner
+classes check sense key 3 (with qualifiers 01, 02, 07, 13), key 4, key 5 (codes 20, 24, 26, 2C) and key B. No
+table pairs a sense code with a message, so the library keeps its own mapping (`SCSISense`). The iX100 has its
+own wording for a jam: a jam or a page longer than the maximum.
+
+**Notices.** The 48-byte notice has the event at 8, two sensor bytes at 12, two operation-panel bytes at 14
+and the sequence number at 16 (our counter). Event names include a scan-button press, a long press (most
+likely the 3-second press for long pages) and a warning before battery power-off; their codes are not in the
+files beyond those we saw.
+
+**Power.** Auto power-off can be Never, 1, 3, 5, 10 or 15 minutes, or 1, 2, 4 or 8 hours. Defaults: the iX500
+turns off after 4 hours; the iX100 after 4 hours on USB power and 5 minutes on battery. The timer restarts on
+loading, scanning, switching users or waking the computer. GET/SET POWER INFO (`E6`) and the battery save
+mode (`EB`) both carry 4 bytes with no field names. A guess not yet checked: in `EB`'s `05 01 00 xx`, `05` is
+the 5-minute battery default and `01` means on.
+
+**Wi-Fi setup.** Control command 0x40 is EXEC WIFI TOOL CMD. Manager's block is 4096 bytes: a 16-byte header
+of four u32 (its names: opcode, offset and size; the fourth is unnamed) and 4080 bytes of data. On the wire the
+block follows a big-endian u32 length (0x1000), 4100 bytes in all, with the opcode first, little-endian
+(inferred from the bytes we sent); opcode 0x0A asks for the functional version. Field sizes in the type names:
+SSID 33 bytes, security 7, cipher 5, key 193, and IPv4 settings as a flag and three 16-character strings, which
+suggests text values. The host table has room for 31 computers (from a type name; medium confidence). Over USB the same commands go through SEND DIAGNOSTIC (`SETUP NET START`, `SETUP NET CMD`, `SETUP NET
+END`), next to the host-table ones (`REG HOSTID DATA`, `CLR HOSTID ADATA`, `GET HOSTID LEN`, `GET HOSTID
+DATA`). The tool's functions include listing access points, WPS (push button and PIN), Wi-Fi and IP settings,
+and the iX100's own access point. The iX100 has two modes, access-point connect (joins a network) and direct
+connect (its own network with a DHCP server and WPS), plus an automatic mode that falls back to direct when no
+access point answers; 802.11b/g/n. Tool timeouts: WPS 185 s, network 30 s, search 5 s.
+
+**Other.**
+- Wi-Fi client defaults: largest read 0x300000 bytes (we read 0x40000), 0x20000 when front and back are
+  interleaved; ports 52217 and 55264.
+- There are two registration layouts, the one we send and a newer one that also carries the app and the
+  computer's name. That one is probably why the iOS app sends 352 bytes.
+- Wi-Fi status reply fields, in order: error, battery status, battery level, the scanner's configured and
+  current Wi-Fi mode, signal strength (four levels in the UI). So the status word we read as 3 may be the
+  signal strength; not yet checked.
+- READ has variants for the pixel size, the paper size, multifeed and the carrier sheet. START JOB has a
+  "clear counter" flag.
+
 ## Open questions
 
+0. The USB command ScanSnap Home sends to switch Cloud mode off (a USB capture of its Scan window would show
+   it), and whether a client can see the mode before it tries to feed: the discovery state read `00800002`
+   in Cloud mode.
 1. `D4` combinations not captured: fixed colour with a fixed resolution, black and white at a fixed
    resolution, page sizes other than A4, the meaning of the constant bytes, and which one turns blank-page
    removal off (capture the app with "remove blank pages" off).
@@ -291,7 +423,12 @@ framework (no libusb):
 3. Whether the iX500 accepts a mobile registration (reserve mode 1) the same way.
 4. What −6 means exactly, and what the iX100 returns to a paired host.
 5. The discovery state word `0x00800007`, the `SAV2` probe, and status word 2 versus 3.
-6. Control command 0x40 and its other opcodes.
+6. Control command 0x40's other opcodes, and the opcode of RESET CONSUMABLES INFO.
 7. The iX100's own access-point mode (the scanner as the network).
 8. USB: the scan sequence with Fujitsu's SCSI set, and what byte 4 of the hardware status (`80` on USB,
    `00` over Wi-Fi) means.
+9. Whether the status word (3, or 2 after power-on) is the Wi-Fi signal strength, and what the iX500's
+   `D9` counters hold after a roller change.
+10. Which models send the `SAV2` and `V2ss` search packets, and which dialect the iX1300 speaks over Wi-Fi.
+11. Whether `REG HOSTID DATA` without `CLR HOSTID ADATA` adds a computer to the host table instead of
+    replacing them all.

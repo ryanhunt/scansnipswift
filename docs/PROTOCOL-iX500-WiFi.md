@@ -298,13 +298,17 @@ DIAGNOSTIC RESULTS (`1C`).
   pairing removes every other computer. open-scansnap's 2026-11-22 notes had read the table on hardware
   (`GET HOSTID LEN`, `GET HOSTID DATA`) but not yet written it.
 - Wi-Fi network: a `SETUP NET START ` … `SETUP NET END   ` session of `SETUP NET CMD   ` commands (opcode
-  6: networks the scanner sees; 7: the network it is set up for; 0x0A: setup version; 0x1006: SSID and
+  6: networks the scanner sees (its notes also name 3 for this); 7: the network it is set up for; 0x0A: setup version; 0x1006: SSID and
   security; 0x1003: IP; 0x1002: name and password). The scanner's Wi-Fi switch must be on (else 0x81). The
   passphrase is encoded like the registration password, with the iX500 key
   `aQweSrTywuIoppAsFdfGuhjkslZxCcvBAnmqNweRstyuNiopaAsdPfghajKlPzxc`. Opcodes 6, 7 and 0x0A were read on
-  hardware; joining (0x1006) had not been sent as of those notes. The byte layouts are in open-scansnap's
-  GPL SANE fork: take facts only.
+  hardware; joining (0x1006) had not been sent as of those notes. Learn the byte layouts from our own
+  captures and read-only probes, not from open-scansnap's GPL SANE fork.
 
 ## Notes from scansnipswift
 
 None yet. Record what the iX500 and iX100 do on real hardware here, with the firmware version and date.
+
+What ScanSnap Manager 7.2.70's files say about both models (consumables, capabilities, power settings,
+Wi-Fi setup) is in docs/PROTOCOL-iX100-WiFi.md, "What ScanSnap Manager's files say"; it was not checked on
+an iX500.

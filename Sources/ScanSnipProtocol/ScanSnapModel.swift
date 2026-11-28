@@ -2,7 +2,8 @@
 ///
 /// Only models the maintainers can test are listed. USB product IDs come from holgerkrupp/Scan
 /// (`FujitsuScanSnapModelProfile.swift`, `FujitsuScanSnapDriverTests.swift`); check them against
-/// `system_profiler SPUSBHostDataType` on real hardware before relying on them.
+/// `system_profiler SPUSBHostDataType` on real hardware before relying on them. Roller replacement intervals
+/// are from ScanSnap Manager 7.2.70's help (docs/PROTOCOL-iX100-WiFi.md, "What ScanSnap Manager's files say").
 public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
     /// How a model talks over Wi-Fi.
     public enum WiFiProtocol: Sendable, Hashable {
@@ -13,7 +14,8 @@ public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
         case undocumented
     }
 
-    /// Fujitsu/PFU's USB vendor ID, shared by every ScanSnap.
+    /// Fujitsu/PFU's USB vendor ID, used by the models listed here. Not every ScanSnap uses it: SANE's model list
+    /// gives the later iX2400 Ricoh's ID, 05CA.
     public static let usbVendorID: UInt16 = 0x04C5
 
     /// Marketing name, for example "iX500".
@@ -28,17 +30,22 @@ public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
     public let wiFi: WiFiProtocol?
     /// Resolutions the scanner accepts, in dots per inch.
     public let resolutions: [Int]
+    /// Sheets after which ScanSnap Manager suggests replacing the roller set (pick and brake roller), or nil
+    /// if the model has no part to replace. Compare with the roller count in `VENS.PageCounters`.
+    public let rollerSetReplacementSheets: Int?
 
     public var description: String { "ScanSnap \(name)" }
 
-    /// ScanSnap iX500 (2012): duplex sheet feeder, USB and Wi-Fi. The iX500 EE shares it under another ID.
+    /// ScanSnap iX500 (2012): duplex sheet feeder, USB and Wi-Fi. `0x13F3` is the iX500 EE, which is not yet
+    /// checked on hardware (SANE lists it as untested).
     public static let iX500 = ScanSnapModel(
         name: "iX500",
         usbProductIDs: [0x132B, 0x13F3],
         duplex: true,
         sheetFeeder: true,
         wiFi: .vens,
-        resolutions: [150, 200, 300, 600]
+        resolutions: [150, 200, 300, 600],
+        rollerSetReplacementSheets: 200_000
     )
 
     /// ScanSnap iX100 (2014): battery-powered, one sheet at a time, one side, USB and Wi-Fi.
@@ -50,7 +57,8 @@ public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
         duplex: false,
         sheetFeeder: false,
         wiFi: .vens,
-        resolutions: [150, 200, 300, 600]
+        resolutions: [150, 200, 300, 600],
+        rollerSetReplacementSheets: nil
     )
 
     public static let all: [ScanSnapModel] = [.iX500, .iX100]

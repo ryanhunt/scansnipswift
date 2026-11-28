@@ -26,6 +26,7 @@ import Testing
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x03))).paperProblem == .feederEmpty)
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x01))).paperProblem == .jam)
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x07))).paperProblem == .doubleFeed)
+        #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x33))).paperProblem == .heldByCloudOrMobile)
         #expect(try #require(SCSISense(sense(key: 3, code: 0x80, qualifier: 0x09))).paperProblem == .other(9))
         #expect(try #require(SCSISense(sense(key: 5, code: 0x20))).paperProblem == nil)
         #expect(try #require(SCSISense(sense(key: 5, code: 0x20))).description == "sense 05/20/00")
@@ -64,5 +65,8 @@ import Testing
         #expect(!ScanSnapModel.iX100.duplex && !ScanSnapModel.iX100.sheetFeeder)
         #expect(ScanSnapModel.iX500.wiFi == .vens)
         #expect(ScanSnapModel.iX100.wiFi == .vens)
+        // ScanSnap Manager's help: the iX500's roller set every 200,000 sheets; the iX100 has no consumables.
+        #expect(ScanSnapModel.iX500.rollerSetReplacementSheets == 200_000)
+        #expect(ScanSnapModel.iX100.rollerSetReplacementSheets == nil)
     }
 }
