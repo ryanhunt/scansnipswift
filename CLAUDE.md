@@ -104,8 +104,13 @@ local: scans and dumps can hold documents, so keep them out of the repo.
   It ends the job, not the reservation.
 - iX100: speaks the iX500's `VENS` Wi-Fi protocol, with its own scan settings (`VENS.iX100ParameterBlock`:
   80 bytes, or 128 with automatic colour) and sequence (no `E9`; `D6` answered on the scan connection). It
-  crops pages, picks resolution and colour on automatic settings, and sends black and white as a G4 TIFF. See docs/PROTOCOL-iX100-WiFi.md. USB ID `04C5:13F4` (from Scan's tests, not yet
-  checked); SANE drives it like an iX500 without duplex.
+  crops pages, picks resolution and colour on automatic settings, and sends black and white as a G4 TIFF. See
+  docs/PROTOCOL-iX100-WiFi.md.
+- **iX100 over USB** (checked 2026-11-29): `04C5:13F4`, one vendor-class interface with bulk OUT `0x02` and bulk
+  IN `0x81`, no driver attached, so IOUSBHost opens it from a plain process. The 31-byte command block and
+  13-byte status work (INQUIRY and hardware status answered), but the Wi-Fi vendor commands are refused
+  (`D9`, `E7`: sense 5/20/00), so USB scanning needs Fujitsu's SCSI set. Wi-Fi stays up while USB is plugged
+  in. It did not enumerate at all through a Thunderbolt dock: plug it straight into the Mac.
 - **Capturing the iOS app:** with the iPhone on USB, `rvictl -s <UDID>` (UDID from `xcrun devicectl list
   devices`) adds interface `rvi0`; the user runs `sudo tcpdump -i rvi0 -s 0 -w captures/<name>.pcap` (BPF
   needs root, and commands typed into a new Terminal-panel tab can be lost while fish starts). Scan a sheet
