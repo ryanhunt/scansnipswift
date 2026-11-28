@@ -28,7 +28,8 @@ extension VENS {
         public static let requestSense: [UInt8] = [0x03, 0, 0, 0, 0x12, 0]
         /// INQUIRY, 96 bytes back. The firmware revision follows the product name.
         public static let inquiry: [UInt8] = [0x12, 0, 0, 0, 0x60, 0]
-        /// Page counters, 0x20 bytes back: u32 total pages, then two more u32 (probably roller counts).
+        /// Page counters, 0x20 bytes back: three u32 and 20 reserved bytes. ScanSnap Manager calls it GET
+        /// CONSUMABLES INFO; see `VENS.PageCounters`.
         public static let counters: [UInt8] = [0xD9, 0, 0, 0, 0x20, 0]
     }
 

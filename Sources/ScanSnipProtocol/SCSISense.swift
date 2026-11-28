@@ -11,6 +11,12 @@ public struct SCSISense: Sendable, Equatable, CustomStringConvertible {
         case coverOpen
         /// 3/80/07: several sheets went through together.
         case doubleFeed
+        /// 3/80/33: the scanner will not move paper for this computer. An iX100 answered it to every command
+        /// that moves paper over USB while in ScanSnap Cloud mode (Scan button lit purple after power-on), and
+        /// scanned normally with its Wi-Fi switched off (2026-11-29). Tell the user to turn Cloud mode off in
+        /// ScanSnap Home or switch the scanner's Wi-Fi off. ScanSnap Manager's files suggest a scanner held by
+        /// a mobile device refuses the same way.
+        case heldByCloudOrMobile
         /// Another 3/80/xx code.
         case other(UInt8)
     }
@@ -43,6 +49,7 @@ public struct SCSISense: Sendable, Equatable, CustomStringConvertible {
         case 0x02: return .coverOpen
         case 0x03: return .feederEmpty
         case 0x07: return .doubleFeed
+        case 0x33: return .heldByCloudOrMobile
         default: return .other(additionalQualifier)
         }
     }

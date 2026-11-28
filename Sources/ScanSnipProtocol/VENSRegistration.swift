@@ -92,12 +92,13 @@ extension VENS {
         case wrongPassword
         /// -4: in use by another host, over USB or Wi-Fi (for example ScanSnap Home).
         case busy
-        /// -6: a paired-host registration that the scanner does not accept from this host. Seen on an
-        /// iX100 with no paired computer, for any host ID; register as `Registrant.mobile` instead.
+        /// -6: the host ID is not registered with the scanner (the name ScanSnap Manager's files give it).
+        /// Seen on an iX100 with no paired computer, for any host ID; register as `Registrant.mobile` instead.
         case notPaired
         /// -7: the host ID is not in the scanner's host table; set up Wi-Fi with ScanSnap Home over USB.
         case unknownHost
-        /// A status nobody has observed yet (-1 and -5 exist in ScanSnap Home).
+        /// A status nobody has observed yet. ScanSnap Manager's names suggest -5 is an unsupported interface
+        /// version and -1 a general error or wrong parameter.
         case other(Int32)
 
         public init(code: Int32) {

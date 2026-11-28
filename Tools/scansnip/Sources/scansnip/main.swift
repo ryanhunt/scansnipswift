@@ -1,11 +1,17 @@
 import Foundation
 import ScanSnipProtocol
 import ScanSnipScanner
+import ScanSnipUSB
+import ImageIO
+import UniformTypeIdentifiers
 
 let usage = """
     usage: scansnip discover [<scanner address>]
            scansnip scan [<scanner address>] [options]
            scansnip info [<scanner address>]       battery, firmware and page counts
+           scansnip usb                             identify a ScanSnap connected over USB
+           scansnip usb scan [options]              scan over USB (colour; --resolution 150|200|300|600,
+                                                    --out, --next-sheet, --trace)
 
     Without an address, discover searches the local networks (broadcast) and lists every scanner, and scan
     looks for the scanner it used last (remembered in ~/Library/Application Support/scansnip), then searches.
@@ -47,7 +53,22 @@ func describe(_ scanner: DiscoveredScanner) -> String {
     case .subnetProbe: "by probing the subnet"
     }
     return "\(model) at \(ip), found \(how), interface version \(a.interfaceVersion), "
-        + "\(a.hasRegisteredHost ? "a host is registered" : "no host registered"); this Mac is \(local)"
+        + "\(a.hasRegisteredHost ? "a host is registered" : "no host registered"), state "
+        + String(format: "%08x", a.state) + "; this Mac is \(local)"
+}
+
+/// Saves a USB page (8-bit RGB) as a PNG.
+func writePNG(_ page: USBScanner.Page, to url: URL) throws {
+    guard let provider = CGDataProvider(data: page.rgb as CFData),
+          let image = CGImage(width: page.width, height: page.height, bitsPerComponent: 8, bitsPerPixel: 24,
+                              bytesPerRow: page.width * 3, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil,
+                              shouldInterpolate: false, intent: .defaultIntent),
+          let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
+    else { throw CocoaError(.fileWriteUnknown) }
+    let dpi = Double(page.resolution)
+    CGImageDestinationAddImage(destination, image, [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi] as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
 }
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -80,6 +101,52 @@ func remember(_ scanner: DiscoveredScanner) {
 
 do {
     switch verb {
+    case "usb":
+        print("ScanSnaps on USB: " + IOUSBHostChannel.connectedProductIDs().map { String(format: "04C5:%04X", $0) }
+            .joined(separator: ", "))
+        let channel = try IOUSBHostChannel.open()
+        guard givenHost == "scan" else {
+            let info = try await USBScanner(channel: channel).readInfo()
+            if let identity = info.inquiry {
+                print("product: \(identity.vendor) \(identity.product), firmware \(identity.revision)")
+            }
+            print("hardware status: " + info.hardwareStatus.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " "))
+            await channel.close()
+            break
+        }
+        let resolution = Int(option("--resolution", in: arguments) ?? "150") ?? 0
+        guard [150, 200, 300, 600].contains(resolution) else { fail("--resolution is 150, 200, 300 or 600 over USB") }
+        var configuration = USBScanner.Configuration(resolution: resolution)
+        if let seconds = option("--next-sheet", in: arguments).flatMap(Int.init) { configuration.nextSheetTimeout = .seconds(seconds) }
+        let showStatus = tracing
+        configuration.onProgress = { progress in
+            switch progress {
+            case .waitingForSheet: print("Put a sheet in")
+            case .sheetLoaded: print("sheet loaded")
+            case .reading(let page): print("scanning page \(page + 1)")
+            case .pageRead(let page, let lines): print("page \(page + 1): \(lines) lines")
+            case .blankSheetSkipped: print("a sheet came back with no image")
+            case .finishing: print("ending the job")
+            case .hardwareStatus(let bytes):
+                if showStatus { print("hardware status: " + bytes.map { String(format: "%02x", $0) }.joined(separator: " ")) }
+            }
+        }
+        let out = URL(fileURLWithPath: option("--out", in: arguments) ?? ".")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let scanner = USBScanner(channel: channel, configuration: configuration)
+        do {
+            for try await page in await scanner.scan() {
+                let file = out.appending(path: "usb-page-\(page.index + 1).png")
+                try writePNG(page, to: file)
+                print("saved \(file.lastPathComponent): \(page.width) x \(page.height) at \(page.resolution) dpi")
+            }
+        } catch {
+            await scanner.waitUntilIdle()
+            await channel.close()
+            throw error
+        }
+        await channel.close()
+
     case "info":
         let scanner = if let host = givenHost {
             try await ScannerDiscovery.find(using: makeTransport(host))

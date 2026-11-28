@@ -13,6 +13,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ScanSnipProtocol", package: "scansnipswift"),
                 .product(name: "ScanSnipScanner", package: "scansnipswift"),
+                .product(name: "ScanSnipUSB", package: "scansnipswift"),
             ]
         ),
     ]

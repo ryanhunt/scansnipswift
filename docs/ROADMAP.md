@@ -61,13 +61,23 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's
    `FujitsuSCSIOverUSB/` and SANE's documentation; **write the code fresh**, since parts of Scan's USB layer
    are GPL-derived. Hardware JPEG gives one stream per side on the iX500.
-5. **iX100 over USB [HW]:** the transport is proven (IOUSBHost, the 31-byte command block, INQUIRY and
-   hardware status answered; see docs/PROTOCOL-iX100-WiFi.md, "Over USB"). Next: the scan itself, with
-   Fujitsu's SCSI set (the Wi-Fi vendor commands are refused over USB): start from the iX500's USB sequence
-   without duplex and the back window, read the VPD page for resolutions, and check each step on hardware.
-6. **Pairing and Wi-Fi setup over USB [HW]:** SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
-   ADATA`, `REG HOSTID DATA `, `SETUP NET …`), per open-scansnap's notes. Pairing removes every other
-   computer, so the API must say so. Lets an app pair a Mac without ScanSnap Home.
+5. **iX100 over USB [HW]:** done for colour on macOS (`USBScanner`, checked 2026-11-29 at 150 dpi). Next:
+   grey and black and white, the other resolutions, several sheets in one scan, reading the VPD page for the
+   scanner's limits, switching ScanSnap Cloud mode off from the library (needs a USB capture of ScanSnap Home),
+   and iPadOS through DriverKit.
+6. **Pairing and Wi-Fi setup [HW]:** over USB, SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
+   ADATA`, `REG HOSTID DATA `, `SETUP NET …`), per open-scansnap's notes; over Wi-Fi, control command 0x40
+   carries the same setup commands (ScanSnap Manager has parallel USB and network versions of each). Pairing
+   with `CLR` first removes every other computer, so the API must say so; whether `REG` alone adds to the
+   table (room for 31) is open. Lets an app pair a Mac without ScanSnap Home, and lets an iPhone set up an
+   iX100 through its own network, iOS having no USB. A wrong network or key cuts the scanner off, so go in
+   stages and **never try opcodes blind** (the opcode space includes resets and mode changes):
+   1. Read only, over USB: the host table, then a `SETUP NET` session reading opcodes 0x0A, 7 and 6
+      (always send `SETUP NET END`). Then the same reads over 0x40 on the iX100.
+   2. Captures of the ScanSnap iOS app's Wi-Fi setup and the Mac Wi-Fi tool (viewing the settings,
+      re-applying the same network, starting and cancelling WPS, changing the mode), for the layouts.
+   3. The first write over USB, cable attached: re-apply the settings read in step 1.
+   4. On the iX500: read the host table, `REG` without `CLR`, read it again, restore it.
 7. **Scan button:** UDP notices over Wi-Fi (`VENS.Notice`), hardware-status polling over USB (byte 4, mask
    0x21 on the iX500, per Scan).
 
@@ -79,7 +89,30 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
 - **iPadOS USB** via DriverKit.
 - **eSCL/AirScan bridge**, as ScanSnack does (ADR 0001 there), so other apps can scan through this package.
 
+## Other models
+
+Not yet checked on hardware: each needs an owner to test it before the package claims support. USB IDs are
+vendor `04C5` unless noted, from SANE's model list and holgerkrupp/Scan; the families from those and from the
+names in ScanSnap Manager 7.2.70's files.
+
+| Model | USB ID | USB commands | Wi-Fi | What it would take |
+|---|---|---|---|---|
+| iX500 EE | `13F3` | Fujitsu SCSI, as the iX500 | none known | The iX500's USB path |
+| iX1300 | `162C` | Fujitsu SCSI | unknown dialect; ScanSnap Manager handles it with the iX500 and iX100 | A capture from an owner; the most likely next Wi-Fi model |
+| iX1500 | `159F` | Fujitsu SCSI | a dialect of the same protocol (ScanSnack): magic `ssNR`, its own discovery reply, registration and pairing on the touch panel, JSON calls | A second dialect in the client; USB close to the iX500's |
+| iX1600 | `1632` | Fujitsu SCSI | treated like the iX1500 by ScanSnap Manager | As the iX1500 |
+| iX1400 | `1630` | Fujitsu SCSI | none | The iX500's USB path |
+| S1500, S500/S510, fi-5110EOX | `11A2`, `10FE`/`1155`, `1096` | Fujitsu SCSI | none | The USB path; low priority |
+| S300, S1300, S1300i, S1100 | `1156`, `11ED`, `128D` | a different protocol that needs PFU's firmware uploaded by the computer | none | A separate driver and firmware we cannot ship: out of scope |
+| SV600 | `128E` | a camera with its own commands | none | Out of scope |
+| iX2400, iX2500 | `05CA:03E3` (iX2400) | unknown | unknown | Out of scope for now |
+
+ScanSnap Manager's Wi-Fi framework names the iX1300, iX1500 and iX1600 next to the iX500 and iX100, and
+its interface version 0x0100 matches the iX1500 registration ScanSnack captured, so one family of protocols
+covers them; the dialects differ enough that our client would not work unchanged.
+
 ## Out of scope
 
-- Models the maintainer cannot test, unless someone who owns one contributes and tests the support.
+- Models the maintainer cannot test, unless someone who owns one contributes and tests the support (see
+  "Other models").
 - OCR, PDF building, naming and cloud upload: app concerns.

@@ -35,6 +35,7 @@ swift build && swift test                       # macOS; no scanner needed
 xcodebuild -scheme ScanSnip-Package -destination 'generic/platform=iOS Simulator' build
 swift build --package-path Tools/scansnip       # the hardware-check tool
 Tools/scansnip/.build/debug/scansnip scan <scanner IP> --trace [--dump <dir>]
+Tools/scansnip/.build/debug/scansnip usb scan --out <dir>   # iX100 on USB, plugged straight into the Mac
 ```
 
 `--trace` prints each command and the shape of each reply; `--dump` also saves raw image reads. For the demo
@@ -52,6 +53,8 @@ local: scans and dumps can hold documents, so keep them out of the repo.
 | `Sources/ScanSnipProtocol/SCSISense.swift` | Sense data and paper problems, shared by USB and Wi-Fi |
 | `Sources/ScanSnipProtocol/ScanSnapModel.swift` | The models this package knows: USB IDs, duplex, Wi-Fi protocol |
 | `Sources/ScanSnipProtocol/VENSiX100.swift` | iX100 scan settings, the sheet-loaded bit, joining multi-read pages |
+| `Sources/ScanSnipProtocol/FujitsuUSB.swift` | USB wire format: the 31-byte command block, status packet, scan CDBs and window data |
+| `Sources/ScanSnipUSB/` | The USB client: `SCSIChannel`, `IOUSBHostChannel` (macOS), the `USBScanner` actor |
 | `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery (`ScannerDiscovery`, BSD-socket `BroadcastBrowser`), the `WiFiScanner` actor |
 | `Tests/ScanSnipScannerTests/SimulatedScanner.swift` | An in-memory iX100 that keeps the rules learned on hardware; extend it when a new one is found |
 | `Tools/scansnip/` | A separate package: the command-line tool for checking against real scanners |
@@ -111,6 +114,15 @@ local: scans and dumps can hold documents, so keep them out of the repo.
   13-byte status work (INQUIRY and hardware status answered), but the Wi-Fi vendor commands are refused
   (`D9`, `E7`: sense 5/20/00), so USB scanning needs Fujitsu's SCSI set. Wi-Fi stays up while USB is plugged
   in. It did not enumerate at all through a Thunderbolt dock: plug it straight into the Mac.
+- **iX100 USB scanning needs ScanSnap Cloud mode off** (checked 2026-11-29). Cloud mode is stored on the
+  scanner and switched in ScanSnap Home's Scan window over USB; while it is on (Scan button purple after
+  power-on) every paper command answers 3/80/33, even inside a `SETUP NET START` session, which only turns the
+  light blue. Switching the scanner's Wi-Fi off also lets USB scan. The iX100 sends USB lines top edge first
+  (no rotation) with samples inverted.
+- **ScanSnap Home's helper `SshResident` holds the USB interface** from login; quit ScanSnap Home rather than
+  killing it (killing it while it held the scanner left the iX100 answering nothing until power-cycled, as
+  did a run aborted mid-command). An iX100 asleep drops off USB entirely; the first command after waking can
+  fail once.
 - **Capturing the iOS app:** with the iPhone on USB, `rvictl -s <UDID>` (UDID from `xcrun devicectl list
   devices`) adds interface `rvi0`; the user runs `sudo tcpdump -i rvi0 -s 0 -w captures/<name>.pcap` (BPF
   needs root, and commands typed into a new Terminal-panel tab can be lost while fish starts). Scan a sheet
