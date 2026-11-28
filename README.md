@@ -9,7 +9,7 @@ top.
 
 > **Status: early.** On hardware so far: the iX100 over Wi-Fi, scanning through `ScanSnipScanner` from a Mac
 > (automatic, colour, grey and black-and-white pages, and pages larger than one read) and from an iPhone
-> (the demo app). Not yet run on an iPad, and the client does not drive the iX500 yet. The maintainer tests with a
+> and an iPad (the demo app), including in the background. The client does not drive the iX500 yet. The maintainer tests with a
 > **ScanSnap iX500** and a **ScanSnap iX100**, so those are the only models this package aims to support.
 > Other models may be added by people who own them. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -18,7 +18,7 @@ top.
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
 | iX500 (and iX500 EE) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | planned | scans with `WiFiScanner` (checked from a Mac and an iPhone) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX100 | planned | scans with `WiFiScanner` (checked from a Mac, an iPhone and an iPad) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 
@@ -56,7 +56,18 @@ for try await page in await client.scan(.init(colorMode: .automatic)) {
     try page.data.write(to: folder.appendingPathComponent("page-\(page.index).\(page.format == .tiff ? "tif" : "jpg")"))
 }
 print("blank sheets skipped:", await client.blankPagesSkipped)
+
+// Battery, firmware and page count (not while a scan runs).
+let info = try await client.readInfo()
+print(info.status?.batteryPercent ?? -1, info.inquiry?.revision ?? "", info.counters?.pages ?? 0)
 ```
+
+`Configuration.onProgress` reports where a scan is (waiting for a sheet, sheet loaded, reading page *n*, the
+battery level read on registering), for status in the UI. On iOS a scan keeps going for the background time
+the app asks for with `beginBackgroundTask` (about 30 s on iOS 27); call `stopAfterCurrentSheet()` when it
+runs low, so the page in hand is kept and the scanner is released before the app is suspended (a suspended
+app cannot end a job, and an iX100 left mid-job stays busy until it is turned off and on). The demo app does
+this.
 
 `locate` tries the remembered address first and, if nothing answers there (addresses change), searches the
 local network with `BroadcastBrowser`, preferring the remembered scanner by name. To list every scanner, call

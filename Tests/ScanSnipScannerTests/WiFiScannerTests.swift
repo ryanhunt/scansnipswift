@@ -8,8 +8,10 @@ private let jpeg: [UInt8] = [0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9]
 private let otherJPEG: [UInt8] = [0xFF, 0xD8, 4, 5, 6, 7, 0xFF, 0xD9]
 
 /// Short timeouts so the tests run in well under a second each.
-private func configuration(password: String? = nil) -> WiFiScanner.Configuration {
+private func configuration(password: String? = nil,
+                           onProgress: (@Sendable (WiFiScanner.Progress) -> Void)? = nil) -> WiFiScanner.Configuration {
     var configuration = WiFiScanner.Configuration(clientMAC: mac, password: password)
+    configuration.onProgress = onProgress
     configuration.commandTimeout = .seconds(1)
     configuration.readTimeout = .seconds(1)
     configuration.firstSheetTimeout = .milliseconds(300)
@@ -51,6 +53,92 @@ private func waitForRelease(_ scanner: SimulatedScanner) async throws {
 }
 
 @Suite struct WiFiScannerTests {
+    @Test func stoppingAfterTheCurrentSheetKeepsItsPage() async throws {
+        // Asked while page 1 is being read (the read is held back), the scan finishes that page, takes no
+        // further sheet, and ends without an error.
+        let scanner = SimulatedScanner(sheets: [jpeg, otherJPEG])
+        await scanner.setLateReads(true)
+        let wifi = try await client(scanner)
+        let consumer = Task { try await collect(wifi.scan()) }
+        for _ in 0..<200 where await scanner.events.last != "28#0" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await wifi.stopAfterCurrentSheet()
+        await scanner.setLateReads(false)
+        await scanner.releaseLateReply()
+        let pages = try await consumer.value
+        #expect(pages.map(\.data) == [Data(jpeg)])
+        await wifi.waitUntilIdle()
+        #expect(await scanner.events.filter { $0 == "E0" }.count == 1)
+        #expect(await scanner.events.suffix(2) == ["D6", "release"])
+    }
+
+    @Test func stoppingWhileWaitingForTheFirstSheetEndsQuietly() async throws {
+        let scanner = SimulatedScanner()
+        var configuration = configuration()
+        configuration.firstSheetTimeout = .seconds(30)
+        let transport = SimulatedTransport(scanner: scanner)
+        let found = try await ScannerDiscovery.find(using: transport, timeout: .seconds(1), interval: .milliseconds(50))
+        let wifi = WiFiScanner(transport: transport, scanner: found, configuration: configuration)
+        let consumer = Task { try await collect(wifi.scan()) }
+        try await Task.sleep(for: .milliseconds(100))
+        let asked = ContinuousClock.now
+        await wifi.stopAfterCurrentSheet()
+        let pages = try await consumer.value  // no noSheet error
+        #expect(pages.isEmpty)
+        #expect(ContinuousClock.now - asked < .seconds(2))  // at once, not when the 30 s wait runs out
+        await wifi.waitUntilIdle()
+        #expect(await scanner.events.last == "release")
+    }
+
+    @Test func readInfoReportsBatteryProductAndCounters() async throws {
+        let scanner = SimulatedScanner()
+        await scanner.setBattery(6)
+        let wifi = try await client(scanner)
+        let info = try await wifi.readInfo()
+        #expect(info.status == VENS.ControlStatus(word: 3, batteryPercent: 6, batteryLow: true))
+        #expect(info.inquiry?.product == "ScanSnap iX100" && info.inquiry?.revision == "0V00")
+        #expect(info.counters?.pages == 206)
+        #expect(await scanner.events == ["register", "status", "INQUIRY", "D9", "release"])
+        #expect(await wifi.lastStatus?.batteryPercent == 6)
+        // The session is released, so a scan can follow straight away.
+        await #expect(throws: ScannerError.noSheet) { try await collect(wifi.scan()) }
+    }
+
+    @Test func aScanReportsTheBatteryWhenItRegisters() async throws {
+        let scanner = SimulatedScanner(sheets: [jpeg])
+        await scanner.setBattery(42)
+        let events = LockedBox<[WiFiScanner.Progress]>([])
+        let transport = SimulatedTransport(scanner: scanner)
+        let found = try await ScannerDiscovery.find(using: transport, timeout: .seconds(1), interval: .milliseconds(50))
+        let wifi = WiFiScanner(transport: transport, scanner: found, configuration: configuration { events.value.append($0) })
+        _ = try await collect(wifi.scan())
+        #expect(events.value.first == .scannerStatus(VENS.ControlStatus(word: 3, batteryPercent: 42, batteryLow: false)))
+    }
+
+    @Test func progressFollowsTheSheet() async throws {
+        let scanner = SimulatedScanner(sheets: [jpeg])
+        let events = LockedBox<[WiFiScanner.Progress]>([])
+        let transport = SimulatedTransport(scanner: scanner)
+        let found = try await ScannerDiscovery.find(using: transport, timeout: .seconds(1), interval: .milliseconds(50))
+        let wifi = WiFiScanner(transport: transport, scanner: found, configuration: configuration { event in
+            events.value.append(event)
+        })
+        _ = try await collect(wifi.scan())
+        await wifi.waitUntilIdle()
+        let states = events.value.filter {
+            switch $0 {
+            case .hardwareStatus, .scannerStatus: false
+            default: true
+            }
+        }
+        // The simulated sheet touches the slot for a few readings before it is loaded.
+        #expect(Array(states.prefix(6)) == [.waitingForSheet, .sheetAtSlot, .sheetLoaded, .reading(page: 0),
+                                             .pageRead(page: 0, bytes: jpeg.count), .waitingForSheet])
+        #expect(states.last == .finishing)
+        #expect(events.value.contains(.hardwareStatus([0, 0, 0x80, 0])))  // loaded, as the iX100 reports it
+    }
+
     @Test func scansEachSheetAndEndsWhenNoMoreCome() async throws {
         let scanner = SimulatedScanner(sheets: [jpeg, otherJPEG])
         let pages = try await collect(client(scanner).scan())

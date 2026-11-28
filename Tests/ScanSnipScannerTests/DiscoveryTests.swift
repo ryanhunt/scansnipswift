@@ -73,6 +73,12 @@ private func broadcastFound(ip: [UInt8], serial: String = "A0XX012345") -> Disco
             == [[10, 0, 0, 2]])
     }
 
+    @Test func silentBroadcastsFallBackToProbingEachAddress() {
+        #expect(!BroadcastBrowser.broadcastLooksSilent(rounds: 1, found: 0))
+        #expect(BroadcastBrowser.broadcastLooksSilent(rounds: 2, found: 0))
+        #expect(!BroadcastBrowser.broadcastLooksSilent(rounds: 5, found: 1))
+    }
+
     @Test func repliesMustComeFromTheAddressTheyAnnounce() throws {
         #expect(BroadcastBrowser.accept([0x56, 0x45], from: [192, 0, 2, 20], interfaces: [lan], probedOneByOne: []) == nil)
         var bytes = [UInt8](repeating: 0, count: 132)

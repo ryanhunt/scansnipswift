@@ -21,6 +21,10 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
   address, `WiFiScanner` (mobile registration, heartbeats, one job per loaded sheet, multi-read pages,
   sheets that come back empty, always ending the job and releasing), a simulated iX100 for tests, and the
   `scansnip` tool. Checked from a Mac on 2026-11-27.
+- **Background scanning, iPad, scanner info [HW]:** on iOS a scan keeps going in the ~30 s of background time
+  the app asks for, a page in progress completes, and `stopAfterCurrentSheet()` ends it cleanly before
+  suspension; the demo ran on an iPad Pro (iPadOS 27.2.1); `readInfo()` reads battery, firmware and page
+  counts; `Configuration.onProgress` reports each step. 2026-11-28 and 29.
 - **Discovery without an address [HW]:** `BroadcastBrowser` (BSD-socket broadcast, probing each address
   where a broadcast is refused) and `ScannerDiscovery.locate` with `RememberedScanner` (last address first,
   then a search, matched by name). Checked from the Mac (broadcast, one-by-one probing, remembered address)
@@ -47,9 +51,11 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    connection) once it is back on the desk; registering as a paired host (`VENS.hostID`) for
    Macs paired by ScanSnap Home; whether a `D4` byte controls the empty blank-sheet reads (capture the app
    with blank-page removal off); a `status` command in `scansnip`.
-3. **iOS, the rest:** scanning while the app is in the background (not tried); an iPad run; whether an App
-   Store build can broadcast without the multicast entitlement (a development build could); CI building the
-   demo app.
+3. **iOS, the rest:** whether a TestFlight or App Store build can broadcast without the multicast
+   entitlement. Apple documents that it cannot (Apple DTS: "sending or receiving multicast or broadcast traffic
+   requires the multicast entitlement", enforced for BSD sockets since iOS 16), yet a development build on iOS
+   27.2.1 could. Request the entitlement before shipping broadcast discovery; the remembered address and the
+   one-by-one probe work without it. Also CI building the demo app.
 4. **USB transport on macOS** (IOUSBHost, no libusb) **[HW]**: the 31-byte command wrapper (byte 0 `0x43`,
    CDB at 0x13), 13-byte status, REQUEST SENSE on a non-zero status, and the iX500 command sequence (SET
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's

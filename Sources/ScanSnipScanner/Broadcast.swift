@@ -70,9 +70,11 @@ public protocol ScannerBrowser: Sendable {
 /// Sends the discovery probe to each interface's broadcast address, about once a second, with BSD sockets
 /// (Network.framework does not send broadcasts).
 ///
-/// On iOS, broadcast needs the `com.apple.developer.networking.multicast` entitlement, which Apple grants on
-/// request. Without it the send fails; with `probeSubnetWhenBroadcastFails` the browser then probes every
-/// address on the subnet one by one (unicast needs no entitlement), for subnets up to /22.
+/// Apple documents that broadcasting on iOS needs the `com.apple.developer.networking.multicast` entitlement
+/// (granted on request); a development build on iOS 27.2.1 broadcast without it. Where a broadcast is refused,
+/// or nothing answers it for two rounds (a refusal might also show as silence), `probeSubnetWhenBroadcastFails`
+/// makes the browser probe every address on the subnet one by one (unicast needs no entitlement), for subnets
+/// up to /22.
 public struct BroadcastBrowser: ScannerBrowser {
     public var interval: Duration
     public var probeSubnetWhenBroadcastFails: Bool
@@ -117,6 +119,7 @@ public struct BroadcastBrowser: ScannerBrowser {
         let deadline = ContinuousClock.now + timeout
         var nextRound = ContinuousClock.now
         var sweepsLeft = 2  // probing a whole subnet is a lot of packets: twice is enough to wake a scanner
+        var rounds = 0
         while ContinuousClock.now < deadline {
             if stop.value { throw CancellationError() }
             if ContinuousClock.now >= nextRound {
@@ -134,6 +137,10 @@ public struct BroadcastBrowser: ScannerBrowser {
                     }
                 }
                 if !probeSubnet.isEmpty { sweepsLeft -= 1 }
+                rounds += 1
+                if sweep, Self.broadcastLooksSilent(rounds: rounds, found: found.count) {
+                    probeSubnet.formUnion(interfaces.map(\.name))
+                }
                 nextRound = ContinuousClock.now + interval
             }
             while let (reply, sender) = socket.receive() {
@@ -157,6 +164,12 @@ public struct BroadcastBrowser: ScannerBrowser {
         else { return nil }
         return DiscoveredScanner(announcement: announcement, localIPv4: interface.address,
                                  method: probedOneByOne.contains(interface.name) ? .subnetProbe : .broadcast)
+    }
+
+    /// Two rounds of broadcasts with no answer at all: probe each address too, in case broadcasts are being
+    /// dropped rather than refused. (A scanner that is off costs two sweeps of the subnet.)
+    static func broadcastLooksSilent(rounds: Int, found: Int) -> Bool {
+        found == 0 && rounds >= 2
     }
 
     static func sameSubnet(_ address: [UInt8], _ interface: IPv4Interface) -> Bool {

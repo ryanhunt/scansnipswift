@@ -79,8 +79,13 @@ local: scans and dumps can hold documents, so keep them out of the repo.
 - **iX100: big pages come in several reads,** each after the first starting with 43 bytes to drop
   (`VENS.iX100ContinuationPrefixLength`); the chunk number stays 0.
 - **Discovery without an address works on iOS.** Network.framework cannot broadcast, so `BroadcastBrowser` uses
-  BSD sockets. A development build on iOS 27.2.1 broadcast without the multicast entitlement; where a broadcast
-  is refused, the browser probes each address on the subnet (unicast needs no entitlement).
+  BSD sockets. A development build on iOS 27.2.1 broadcast without the multicast entitlement, though Apple
+  documents that it is needed (request it before shipping); where a broadcast is refused or unanswered, the
+  browser probes each address on the subnet (unicast needs no entitlement).
+- **A low iX100 battery looks like a protocol bug.** At 6% it dropped sessions after 35-57 s. The status reply
+  (`VENS.ControlStatus`, or `scansnip info`) gives the level; check it first.
+- **iOS background:** about 30 s of `beginBackgroundTask` time; a suspended app cannot end a job, so stop with
+  `stopAfterCurrentSheet()` while time remains (the demo app shows how).
 - **Send each control command the moment the 16-byte greeting arrives.** An iX100 left waiting about a second
   closes the connection with no answer, which looks like a protocol error. It cost three wrong guesses.
 - **The client MAC is the session identity, but need not be real.** A registration starts a reservation

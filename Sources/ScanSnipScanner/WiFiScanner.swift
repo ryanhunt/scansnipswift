@@ -36,6 +36,9 @@ public actor WiFiScanner {
         public var pollInterval: Duration = .milliseconds(500)
         /// How often to send heartbeats (the scanner drops a session after about 40 s without them).
         public var heartbeatInterval: Duration = .seconds(5)
+        /// Called as a scan moves along, for status in the UI ("Insert a sheet", "Scanning page 2") and for
+        /// diagnosis. Called on the scanner's actor: hop to the main actor before touching UI state.
+        public var onProgress: (@Sendable (Progress) -> Void)?
 
         public init(clientMAC: [UInt8], password: String? = nil) {
             precondition(clientMAC.count == 6, "A MAC address is 6 bytes")
@@ -47,6 +50,37 @@ public actor WiFiScanner {
         public static func randomClientMAC() -> [UInt8] {
             [0x02] + (0..<5).map { _ in UInt8.random(in: 0...255) }
         }
+    }
+
+    /// Where a scan is, reported through `Configuration.onProgress`.
+    public enum Progress: Sendable, Equatable {
+        /// Waiting for a sheet to be put in.
+        case waitingForSheet
+        /// A sheet is at the slot but the scanner has not loaded it yet.
+        case sheetAtSlot
+        /// The scanner has loaded a sheet; it is fed at once.
+        case sheetLoaded
+        /// Scanning the sheet that becomes this page (pages count from 0).
+        case reading(page: Int)
+        case pageRead(page: Int, bytes: Int)
+        /// A sheet came back with no image (seen with blank sheets).
+        case blankSheetSkipped
+        /// Ending the job and releasing the scanner.
+        case finishing
+        /// The first bytes of the hardware status whenever they change, for diagnosis.
+        case hardwareStatus([UInt8])
+        /// The scanner's status, read right after registering (battery level on the iX100).
+        case scannerStatus(VENS.ControlStatus)
+    }
+
+    /// What `readInfo()` reports about a scanner.
+    public struct Info: Sendable, Equatable {
+        /// Status word and, on the iX100, the battery level.
+        public let status: VENS.ControlStatus?
+        /// Vendor, product and firmware revision.
+        public let inquiry: VENS.Inquiry?
+        /// Lifetime page count and the other counters.
+        public let counters: VENS.PageCounters?
     }
 
     public enum PageFormat: Sendable, Equatable {
@@ -69,6 +103,7 @@ public actor WiFiScanner {
     /// Sheets whose read came back with no image during the last scan (seen with blank sheets; they produce
     /// no page).
     public private(set) var blankPagesSkipped = 0
+    private var stopRequested = false
     private var scanStream: (any VENSStream)?
     private var jobOpen = false
     private var registered = false
@@ -92,9 +127,17 @@ public actor WiFiScanner {
         }
         scanning = true
         blankPagesSkipped = 0
+        stopRequested = false
         let task = Task { await self.run(parameters, continuation) }
         continuation.onTermination = { _ in task.cancel() }
         return stream
+    }
+
+    /// Ends the scan normally once the sheet being scanned, if any, is read: no more sheets are waited for,
+    /// and the stream finishes without an error. Gentler than cancelling, which abandons a page mid-read;
+    /// for example when an iOS app is about to run out of background time.
+    public func stopAfterCurrentSheet() {
+        if scanning { stopRequested = true }
     }
 
     /// Returns once no scan is running and its clean-up (ending the job, releasing the scanner) is done.
@@ -120,6 +163,43 @@ public actor WiFiScanner {
     }
 
     private var mac: [UInt8] { configuration.clientMAC }
+
+    /// The status read when the last scan or `readInfo()` registered (battery level on the iX100).
+    public private(set) var lastStatus: VENS.ControlStatus?
+
+    /// Reads the scanner's status (battery), INQUIRY (product, firmware) and page counters, then releases it.
+    /// Uses the scanner the way a scan does, so not while one runs (`ScannerError.alreadyScanning`).
+    public func readInfo() async throws -> Info {
+        guard !scanning else { throw ScannerError.alreadyScanning }
+        scanning = true
+        defer {
+            scanning = false
+            let waiters = idleWaiters
+            idleWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
+        guard scanner.model == .iX100 else { throw ScannerError.unsupportedModel(scanner.announcement.model) }
+        guard let password = configuration.password ?? scanner.announcement.factoryPassword else {
+            throw ScannerError.passwordRequired
+        }
+        var failure: Error?
+        var inquiry: VENS.Inquiry?
+        var counters: VENS.PageCounters?
+        do {
+            try await register(password: password)
+            let stream = try await openScanChannel()
+            scanStream = stream
+            let identity = try await command(stream, VENS.Command.inquiry, inputLength: 0x60)
+            if identity.isGood { inquiry = VENS.Inquiry(data: identity.data) }
+            let count = try await command(stream, VENS.Command.counters, inputLength: 0x20)
+            if count.isGood { counters = VENS.PageCounters(data: count.data) }
+        } catch {
+            failure = error
+        }
+        await Task { await self.finishSession() }.value
+        if let failure { throw failure }
+        return Info(status: lastStatus, inquiry: inquiry, counters: counters)
+    }
 
     // MARK: Session
 
@@ -166,7 +246,9 @@ public actor WiFiScanner {
         }
         // The iOS app reads the status straight after registering; do the same (byte 11 of the reply looks
         // like the battery level).
-        _ = try await control(.status)
+        let statusReply = try await control(.status)
+        lastStatus = VENS.ControlStatus(reply: statusReply)
+        if let lastStatus { configuration.onProgress?(.scannerStatus(lastStatus)) }
     }
 
     /// Sends heartbeats until cancelled. If the socket closes (a network drop), it opens a new one.
@@ -206,6 +288,7 @@ public actor WiFiScanner {
     /// If the job cannot be ended, the scanner is not released: an iX100 released mid-job stays busy until it
     /// is power-cycled, while an unreleased session lapses about 40 s after the heartbeats stop.
     private func finishSession() async {
+        configuration.onProgress?(.finishing)
         var jobEnded = true
         if jobOpen {
             jobEnded = false
@@ -237,7 +320,7 @@ public actor WiFiScanner {
         var index = 0
         var sheetsFed = 0
         // Every sheet is its own job with image index 0, so the iX500's per-job sheet limit does not apply.
-        while true {
+        while !stopRequested {
             let first = sheetsFed == 0
             let stream = try await openScanChannel()
             scanStream = stream
@@ -245,7 +328,7 @@ public actor WiFiScanner {
             guard try await waitForSheet(stream, timeout: timeout) else {
                 await stream.close()
                 scanStream = nil
-                if first { throw ScannerError.noSheet }
+                if first, !stopRequested { throw ScannerError.noSheet }
                 return
             }
             try await expectGood("CancelRead", stream, VENS.Command.cancelRead)
@@ -268,6 +351,7 @@ public actor WiFiScanner {
                 throw ScannerError.unexpectedStatus("StartPaper", feed.status)
             }
             // Each job counts images from 0.
+            configuration.onProgress?(.reading(page: index))
             let image = try await readImage(stream, index: 0)
             try await endJob(stream)
             await stream.close()
@@ -277,7 +361,9 @@ public actor WiFiScanner {
                 // Some blank sheets come back with no image, in colour and automatic modes (2026-11-27);
                 // probably the scanner's blank-page removal, though one nearly blank sheet scanned.
                 blankPagesSkipped += 1
+                configuration.onProgress?(.blankSheetSkipped)
             } else {
+                configuration.onProgress?(.pageRead(page: index, bytes: image.count))
                 continuation.yield(Page(index: index, format: parameters.returnsTIFF ? .tiff : .jpeg,
                                         data: Data(image)))
                 index += 1
@@ -296,15 +382,28 @@ public actor WiFiScanner {
     /// page the sensor reads empty at once, as in the app's captures. Returns false on timeout.
     private func waitForSheet(_ stream: any VENSStream, timeout: Duration) async throws -> Bool {
         let deadline = ContinuousClock.now + timeout
+        var lastStatus: [UInt8]?
+        var lastState: Progress?
+        func report(_ state: Progress) {
+            if state != lastState { configuration.onProgress?(state) }
+            lastState = state
+        }
+        report(.waitingForSheet)
         while true {
             let status = try await command(stream, VENS.Command.hardwareStatus, inputLength: 0x20)
             guard status.isGood else { throw ScannerError.unexpectedStatus("HardwareStatus", status.status) }
+            let head = Array(status.data.prefix(4))
+            if head != lastStatus { configuration.onProgress?(.hardwareStatus(head)) }
+            lastStatus = head
             switch VENS.iX100SheetReady(status.data) {
-            case true?: return true
-            case false?: break
+            case true?:
+                report(.sheetLoaded)
+                return true
+            case false?:
+                report(VENS.hopperHasPaper(status.data) == true ? .sheetAtSlot : .waitingForSheet)
             case nil: throw ScannerError.protocolError(.truncated(expected: 3, actual: status.data.count))
             }
-            if ContinuousClock.now >= deadline { return false }
+            if ContinuousClock.now >= deadline || stopRequested { return false }
             try await Task.sleep(for: configuration.pollInterval)
         }
     }
