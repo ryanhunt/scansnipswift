@@ -36,6 +36,7 @@ xcodebuild -scheme ScanSnip-Package -destination 'generic/platform=iOS Simulator
 swift build --package-path Tools/scansnip       # the hardware-check tool
 Tools/scansnip/.build/debug/scansnip scan <scanner IP> --trace [--dump <dir>]
 Tools/scansnip/.build/debug/scansnip usb scan --out <dir>   # iX100 on USB, plugged straight into the Mac
+Tools/scansnip/.build/debug/scansnip decode-usb captures/<file>.pcapng   # commands in a USB capture
 ```
 
 `--trace` prints each command and the shape of each reply; `--dump` also saves raw image reads. For the demo
@@ -55,6 +56,7 @@ local: scans and dumps can hold documents, so keep them out of the repo.
 | `Sources/ScanSnipProtocol/VENSiX100.swift` | iX100 scan settings, the sheet-loaded bit, joining multi-read pages |
 | `Sources/ScanSnipProtocol/FujitsuUSB.swift` | USB wire format: the 31-byte command block, status packet, scan CDBs and window data |
 | `Sources/ScanSnipUSB/` | The USB client: `SCSIChannel`, `IOUSBHostChannel` (macOS), the `USBScanner` actor |
+| `Sources/ScanSnipCapture/` | Tooling: reads USB captures (pcap/pcapng, USBPcap or usbmon) and rebuilds the commands; `scansnip decode-usb`, docs/CAPTURING-USB.md |
 | `Sources/ScanSnipScanner/` | The Wi-Fi client: transport protocols, Network.framework transport, discovery (`ScannerDiscovery`, BSD-socket `BroadcastBrowser`), the `WiFiScanner` actor |
 | `Tests/ScanSnipScannerTests/SimulatedScanner.swift` | An in-memory iX100 that keeps the rules learned on hardware; extend it when a new one is found |
 | `Tools/scansnip/` | A separate package: the command-line tool for checking against real scanners |

@@ -25,8 +25,27 @@ import ScanSnipScanner
         let pages = try await pages(USBScanner(channel: device, configuration: configuration()))
         #expect(pages.count == 1)
         let page = try #require(pages.first)
-        #expect(page.width == 1274 && page.height == 70 && page.resolution == 150)
-        #expect(Array(page.rgb) == (await device.uprightPages)[0])
+        #expect(page.width == 1274 && page.height == 70 && page.resolution == 150 && page.format == .rgb8)
+        #expect(Array(page.data) == (await device.uprightPages)[0])
+    }
+
+    @Test func grayAndBlackAndWhitePagesAreMadeFromColour() async throws {
+        var gray = configuration()
+        gray.colorMode = .gray
+        let grayDevice = SimulatedUSBScanner(sheets: [4])
+        let grayPage = try #require(try await pages(USBScanner(channel: grayDevice, configuration: gray)).first)
+        #expect(grayPage.format == .gray8 && grayPage.data.count == 1274 * 4)
+        #expect(Array(grayPage.data) == PixelConversion.gray(fromRGB: (await grayDevice.uprightPages)[0]))
+
+        var blackAndWhite = configuration()
+        blackAndWhite.colorMode = .blackAndWhite(threshold: 100)
+        let device = SimulatedUSBScanner(sheets: [4])
+        let page = try #require(try await pages(USBScanner(channel: device, configuration: blackAndWhite)).first)
+        // 1274 pixels need 160 bytes a line (159.25 rounded up).
+        #expect(page.format == .blackAndWhite1 && page.data.count == 160 * 4)
+        let expected = PixelConversion.blackAndWhite(fromGray: PixelConversion.gray(fromRGB: (await device.uprightPages)[0]),
+                                                     width: 1274, threshold: 100)
+        #expect(Array(page.data) == expected)
     }
 
     @Test func runsTheSetupBeforeFeedingAndEndsTheJob() async throws {

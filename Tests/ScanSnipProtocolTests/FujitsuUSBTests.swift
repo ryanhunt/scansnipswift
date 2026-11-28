@@ -87,3 +87,21 @@ import Testing
         #expect(FujitsuUSB.rgbFromSamples([0, 0, 0, 255, 0, 10]) == [255, 255, 255, 0, 255, 245])
     }
 }
+
+@Suite struct CommandBlockParsingTests {
+    @Test func readsTheCDBBackByItsGroup() {
+        // Group 0 (INQUIRY): 6 bytes; a vendor command (C2): 10 bytes, its trailing zeros included.
+        #expect(FujitsuUSB.cdb(inCommandBlock: FujitsuUSB.commandBlock([0x12, 0, 0, 0, 0x60, 0])) == [0x12, 0, 0, 0, 0x60, 0])
+        #expect(FujitsuUSB.cdb(inCommandBlock: FujitsuUSB.commandBlock([0xC2, 0, 0, 0, 0, 0, 0, 0, 0x20, 0]))
+                == [0xC2, 0, 0, 0, 0, 0, 0, 0, 0x20, 0])
+        // A 12-byte group (A0–BF) fills the block.
+        #expect(FujitsuUSB.cdb(inCommandBlock: FujitsuUSB.commandBlock([0xA8] + [UInt8](repeating: 1, count: 11)))?.count == 12)
+    }
+
+    @Test func otherBytesAreNotABlock() {
+        var block = FujitsuUSB.commandBlock([0x00, 0, 0, 0, 0, 0])
+        #expect(FujitsuUSB.cdb(inCommandBlock: Array(block.dropLast())) == nil)
+        block[0] = 0x53
+        #expect(FujitsuUSB.cdb(inCommandBlock: block) == nil)
+    }
+}

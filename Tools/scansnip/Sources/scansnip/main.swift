@@ -2,6 +2,7 @@ import Foundation
 import ScanSnipProtocol
 import ScanSnipScanner
 import ScanSnipUSB
+import ScanSnipCapture
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -10,8 +11,10 @@ let usage = """
            scansnip scan [<scanner address>] [options]
            scansnip info [<scanner address>]       battery, firmware and page counts
            scansnip usb                             identify a ScanSnap connected over USB
-           scansnip usb scan [options]              scan over USB (colour; --resolution 150|200|300|600,
-                                                    --out, --next-sheet, --trace)
+           scansnip usb scan [options]              scan over USB (--color color|gray|bw,
+                                                    --resolution 150|200|300|600, --out, --next-sheet, --trace)
+           scansnip decode-usb <capture> [--bytes n]  the scanner commands in a USB capture (pcap or pcapng from
+                                                    USBPcap on Windows or usbmon on Linux)
 
     Without an address, discover searches the local networks (broadcast) and lists every scanner, and scan
     looks for the scanner it used last (remembered in ~/Library/Application Support/scansnip), then searches.
@@ -57,12 +60,17 @@ func describe(_ scanner: DiscoveredScanner) -> String {
         + String(format: "%08x", a.state) + "; this Mac is \(local)"
 }
 
-/// Saves a USB page (8-bit RGB) as a PNG.
+/// Saves a USB page as a PNG (colour, grey, or 1-bit black and white).
 func writePNG(_ page: USBScanner.Page, to url: URL) throws {
-    guard let provider = CGDataProvider(data: page.rgb as CFData),
-          let image = CGImage(width: page.width, height: page.height, bitsPerComponent: 8, bitsPerPixel: 24,
-                              bytesPerRow: page.width * 3, space: CGColorSpaceCreateDeviceRGB(),
-                              bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil,
+    let (bitsPerPixel, space, decode): (Int, CGColorSpace, [CGFloat]?) = switch page.format {
+    case .rgb8: (24, CGColorSpaceCreateDeviceRGB(), nil)
+    case .gray8: (8, CGColorSpaceCreateDeviceGray(), nil)
+    case .blackAndWhite1: (1, CGColorSpaceCreateDeviceGray(), [1, 0])   // 1 is black
+    }
+    guard let provider = CGDataProvider(data: page.data as CFData),
+          let image = CGImage(width: page.width, height: page.height, bitsPerComponent: bitsPerPixel == 24 ? 8 : bitsPerPixel,
+                              bitsPerPixel: bitsPerPixel, bytesPerRow: page.format.bytesPerLine(width: page.width),
+                              space: space, bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: decode,
                               shouldInterpolate: false, intent: .defaultIntent),
           let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
     else { throw CocoaError(.fileWriteUnknown) }
@@ -116,7 +124,13 @@ do {
         }
         let resolution = Int(option("--resolution", in: arguments) ?? "150") ?? 0
         guard [150, 200, 300, 600].contains(resolution) else { fail("--resolution is 150, 200, 300 or 600 over USB") }
-        var configuration = USBScanner.Configuration(resolution: resolution)
+        let colorMode: USBScanner.ColorMode = switch option("--color", in: arguments) ?? "color" {
+        case "color": .color
+        case "gray": .gray
+        case "bw": .blackAndWhite()
+        default: fail("--color is color, gray or bw over USB")
+        }
+        var configuration = USBScanner.Configuration(resolution: resolution, colorMode: colorMode)
         if let seconds = option("--next-sheet", in: arguments).flatMap(Int.init) { configuration.nextSheetTimeout = .seconds(seconds) }
         let showStatus = tracing
         configuration.onProgress = { progress in
@@ -138,7 +152,7 @@ do {
             for try await page in await scanner.scan() {
                 let file = out.appending(path: "usb-page-\(page.index + 1).png")
                 try writePNG(page, to: file)
-                print("saved \(file.lastPathComponent): \(page.width) x \(page.height) at \(page.resolution) dpi")
+                print("saved \(file.lastPathComponent): \(page.width) x \(page.height) at \(page.resolution) dpi, \(page.format)")
             }
         } catch {
             await scanner.waitUntilIdle()
@@ -146,6 +160,16 @@ do {
             throw error
         }
         await channel.close()
+
+    case "decode-usb":
+        guard let path = givenHost else { fail("decode-usb needs a capture file") }
+        let bytes = max(0, Int(option("--bytes", in: arguments) ?? "16") ?? 16)
+        let file = try [UInt8](Data(contentsOf: URL(fileURLWithPath: path)))
+        let exchanges = Transcript.exchanges(try CaptureFile.bulkTransfers(in: file))
+        if exchanges.isEmpty { print("no ScanSnap command blocks found") }
+        for (index, exchange) in exchanges.enumerated() {
+            print(String(format: "%4d ", index + 1) + Transcript.describe(exchange, bytesShown: bytes))
+        }
 
     case "info":
         let scanner = if let host = givenHost {

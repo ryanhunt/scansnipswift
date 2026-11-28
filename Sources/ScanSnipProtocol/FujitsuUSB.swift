@@ -24,6 +24,21 @@ public enum FujitsuUSB {
         return block
     }
 
+    /// The CDB inside a command block, or nil if `block` is not one (31 bytes starting `0x43`). Its length comes
+    /// from the opcode's SCSI group: 6 bytes for 0x00–0x1F, 16 for 0x80–0x9F, 12 for 0xA0–0xBF, otherwise 10
+    /// (Fujitsu's vendor commands, such as `C2` and `F1`, are 10 bytes).
+    public static func cdb(inCommandBlock block: [UInt8]) -> [UInt8]? {
+        guard block.count == commandBlockLength, block[0] == 0x43 else { return nil }
+        let opcode = block[cdbOffset]
+        let length = switch opcode {
+        case 0x00...0x1F: 6
+        case 0x80...0x9F: 16
+        case 0xA0...0xBF: 12
+        default: 10
+        }
+        return Array(block[cdbOffset..<min(commandBlockLength, cdbOffset + length)])
+    }
+
     /// The 13-byte packet after each command. Byte 0 was `0x53` ("S") on the iX100; byte 9 is the SCSI status.
     public struct StatusPacket: Sendable, Equatable {
         public static let good: UInt8 = 0

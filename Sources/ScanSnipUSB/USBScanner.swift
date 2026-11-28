@@ -13,7 +13,7 @@ import ScanSnipScanner
 /// let channel = try IOUSBHostChannel.open()
 /// let scanner = USBScanner(channel: channel, configuration: .init(resolution: 300))
 /// for try await page in await scanner.scan() {
-///     save(page.rgb, width: page.width, height: page.height)
+///     save(page.data, format: page.format, width: page.width, height: page.height)
 /// }
 /// await channel.close()
 /// ```
@@ -21,6 +21,9 @@ public actor USBScanner {
     public struct Configuration: Sendable {
         /// Dots per inch across and along the page: 150, 200, 300 or 600.
         public var resolution: Int
+        /// The pages' pixel format. The scanner always reads colour; grey and black and white are made from it
+        /// on this device (`PixelConversion`).
+        public var colorMode: ColorMode = .color
         /// How long to wait for an ordinary command.
         public var commandTimeout: Duration = .seconds(10)
         /// How long to wait for one image read (the first waits while the sheet feeds).
@@ -34,8 +37,35 @@ public actor USBScanner {
         /// Called as a scan moves along. Called on the scanner's actor: hop to the main actor for UI state.
         public var onProgress: (@Sendable (Progress) -> Void)?
 
-        public init(resolution: Int = 150) {
+        public init(resolution: Int = 150, colorMode: ColorMode = .color) {
             self.resolution = resolution
+            self.colorMode = colorMode
+        }
+    }
+
+    public enum ColorMode: Sendable, Equatable {
+        case color
+        case gray
+        /// One bit per pixel; pixels darker than `threshold` (of 255) are black.
+        case blackAndWhite(threshold: UInt8 = 128)
+    }
+
+    /// How a page's `data` is laid out. Lines run from the edge fed first.
+    public enum PixelFormat: Sendable, Equatable {
+        /// 3 bytes per pixel: red, green, blue.
+        case rgb8
+        /// 1 byte per pixel, 0 black to 255 white.
+        case gray8
+        /// 1 bit per pixel, the most significant first, 1 black; each line padded to whole bytes.
+        case blackAndWhite1
+
+        /// Bytes in one line of `width` pixels.
+        public func bytesPerLine(width: Int) -> Int {
+            switch self {
+            case .rgb8: width * 3
+            case .gray8: width
+            case .blackAndWhite1: (width + 7) / 8
+            }
         }
     }
 
@@ -56,16 +86,16 @@ public actor USBScanner {
         case hardwareStatus([UInt8])
     }
 
-    /// One side of a sheet: 8-bit RGB, lines in the order the sheet was fed (the edge that went in first at the
-    /// top).
+    /// One side of a sheet, lines in the order the sheet was fed (the edge that went in first at the top).
     public struct Page: Sendable, Equatable {
         /// Pages count from 0 in a scan.
         public let index: Int
         public let width: Int
         public let height: Int
         public let resolution: Int
-        /// `width * height * 3` bytes.
-        public let rgb: Data
+        public let format: PixelFormat
+        /// `format.bytesPerLine(width:) * height` bytes.
+        public let data: Data
     }
 
     /// What `readInfo()` reports.
@@ -230,7 +260,15 @@ public actor USBScanner {
         }
         report(.pageRead(page: index, lines: lines))
         let rgb = FujitsuUSB.rgbFromSamples(Array(image.prefix(lines * bytesPerLine)))
-        return Page(index: index, width: size.width, height: lines, resolution: configuration.resolution, rgb: Data(rgb))
+        let (format, pixels): (PixelFormat, [UInt8]) = switch configuration.colorMode {
+        case .color: (.rgb8, rgb)
+        case .gray: (.gray8, PixelConversion.gray(fromRGB: rgb))
+        case .blackAndWhite(let threshold):
+            (.blackAndWhite1, PixelConversion.blackAndWhite(fromGray: PixelConversion.gray(fromRGB: rgb), width: size.width,
+                                                            threshold: threshold))
+        }
+        return Page(index: index, width: size.width, height: lines, resolution: configuration.resolution, format: format,
+                    data: Data(pixels))
     }
 
     /// Lamp on, retried while the scanner says it is not ready yet (sense key 2) or busy.

@@ -61,9 +61,11 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's
    `FujitsuSCSIOverUSB/` and SANE's documentation; **write the code fresh**, since parts of Scan's USB layer
    are GPL-derived. Hardware JPEG gives one stream per side on the iX500.
-5. **iX100 over USB [HW]:** done for colour on macOS (`USBScanner`, checked 2026-11-29 at 150 dpi). Next:
-   grey and black and white, the other resolutions, several sheets in one scan, reading the VPD page for the
-   scanner's limits, switching ScanSnap Cloud mode off from the library (needs a USB capture of ScanSnap Home),
+5. **iX100 over USB [HW]:** done for colour on macOS (`USBScanner`, checked 2026-11-29 at 150 dpi). Grey and
+   black and white are made from colour on the device (as Scan does for the iX500); not yet checked on
+   hardware. Next: check them and the other resolutions on hardware, several sheets in one scan, the scanner's
+   own grey and line-art modes, reading the VPD page for the scanner's limits, switching ScanSnap Cloud mode off from the library (needs a USB capture of ScanSnap Home; see
+   docs/CAPTURING-USB.md),
    and iPadOS through DriverKit.
 6. **Pairing and Wi-Fi setup [HW]:** over USB, SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
    ADATA`, `REG HOSTID DATA `, `SETUP NET …`), per open-scansnap's notes; over Wi-Fi, control command 0x40
