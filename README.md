@@ -27,7 +27,7 @@ top.
 |---|---|
 | `ScanSnipProtocol` | Wire formats only, no I/O: the Wi-Fi protocol of the iX500 and iX100 (`VENS`: discovery, notices, registration, the SCSI tunnel, scan parameters for each model), SCSI sense data, and the model table (`ScanSnapModel`). |
 | `ScanSnipScanner` | Talks to a scanner over Wi-Fi: `ScannerDiscovery.locate` finds it (remembered address, then a broadcast search), `WiFiScanner` scans pages. iX100 only for now. |
-| `ScanSnipUSB` | Talks to a scanner over USB: `IOUSBHostChannel` opens it with Apple's IOUSBHost (macOS, no driver, no libusb), `USBScanner` scans pages as 8-bit RGB. iX100 only for now. |
+| `ScanSnipUSB` | Talks to a scanner over USB: `IOUSBHostChannel` opens it with Apple's IOUSBHost (macOS, no driver, no libusb), `USBScanner` scans pages in colour, grey or black and white (the last two made from colour on the device). iX100 only for now. |
 | `ScanSnipCapture` | Tooling, not needed by apps: reads USB captures (pcap/pcapng from USBPcap or Linux usbmon) and rebuilds the scanner commands in them (`scansnip decode-usb`; see [docs/CAPTURING-USB.md](docs/CAPTURING-USB.md)). |
 
 Requires iOS 16 / macOS 13 or later and Swift 6.
@@ -92,9 +92,9 @@ Over USB on a Mac:
 import ScanSnipUSB
 
 let channel = try IOUSBHostChannel.open()                          // the first ScanSnap on USB
-let scanner = USBScanner(channel: channel, configuration: .init(resolution: 300))
+let scanner = USBScanner(channel: channel, configuration: .init(resolution: 300, colorMode: .gray))
 for try await page in await scanner.scan() {
-    save(page.rgb, width: page.width, height: page.height)          // 8-bit RGB, top edge first
+    save(page.data, format: page.format, width: page.width, height: page.height)   // lines top edge first
 }
 await channel.close()
 ```
