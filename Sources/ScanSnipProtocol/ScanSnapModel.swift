@@ -43,7 +43,7 @@ public struct ScanSnapModel: Sendable, Hashable, CustomStringConvertible {
 
     /// ScanSnap iX100 (2014): battery-powered, one sheet at a time, one side, USB and Wi-Fi.
     /// Over Wi-Fi it answers `VENS` discovery and accepts mobile registrations (checked on firmware 0V00,
-    /// 2026-11-27). Its USB ID and resolutions are not yet confirmed on hardware.
+    /// 2026-11-27). Its USB ID was confirmed on hardware (2026-11-29); its resolutions are not yet.
     public static let iX100 = ScanSnapModel(
         name: "iX100",
         usbProductIDs: [0x13F4],

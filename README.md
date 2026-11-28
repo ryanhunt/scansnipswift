@@ -18,7 +18,7 @@ top.
 | Model | USB | Wi-Fi | Notes |
 |---|---|---|---|
 | iX500 (and iX500 EE) | planned | protocol ported (`VENS`); the client does not support it yet | Duplex sheet feeder. Macs pair once over USB (ScanSnap Home does it); phones use the password. |
-| iX100 | planned | scans with `WiFiScanner` (checked from a Mac, an iPhone and an iPad) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
+| iX100 | commands work (INQUIRY, status); scanning planned | scans with `WiFiScanner` (checked from a Mac, an iPhone and an iPad) | One sheet at a time, single-sided, battery. [Notes](docs/PROTOCOL-iX100-WiFi.md). |
 
 ## Packages
 

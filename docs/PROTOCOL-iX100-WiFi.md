@@ -262,6 +262,26 @@ copy before dropping it. Multi-read black-and-white (TIFF) pages have not been s
   battery level in percent.
 - An idle iX100 announces an all-`FF` registered-host ID; `Announcement.hasRegisteredHost` treats it as none.
 
+## Over USB
+
+Checked on 2026-11-29 from a Mac (macOS 27.2.1), firmware 0V00, with a throwaway tool on Apple's IOUSBHost
+framework (no libusb):
+
+- **Device:** vendor `04C5`, product `13F4` (as Scan's tests had it), USB 2.0 high speed. One configuration
+  with one interface, class/subclass/protocol `FF/FF/FF`, two endpoints: bulk OUT `0x02` and bulk IN `0x81`,
+  512-byte packets. No macOS driver claims the interface, so a normal process can open it.
+- **Commands** use the 31-byte block known from the iX500 (byte 0 `0x43`, the CDB at `0x13`) on bulk OUT,
+  then the data on bulk IN, then a 13-byte status packet: `53` ("S") at byte 0, the SCSI status at byte 9.
+- **INQUIRY** answered `FUJITSU`, `ScanSnap iX100`, `0V00`, as over Wi-Fi.
+- **Hardware status (`C2`)** answered `00 00 00 80 80 01 20 00` with no sheet in: byte 3 as over Wi-Fi, but
+  byte 4 `80` where Wi-Fi showed `00` (meaning unknown; perhaps the USB connection or power).
+- **The Wi-Fi vendor commands are refused** over USB: `D9` (counters) and `E7` (firmware) gave CHECK
+  CONDITION with sense 5/20/00 (invalid command). Scanning over USB therefore needs Fujitsu's SCSI command
+  set, not the `VENS` sequence.
+- **Wi-Fi stays on** while USB is connected: the scanner still answered discovery.
+- Through a Thunderbolt dock the scanner did not enumerate at all; plugged straight into the Mac (micro-USB to
+  USB-C) it did.
+
 ## Open questions
 
 1. `D4` combinations not captured: fixed colour with a fixed resolution, black and white at a fixed
@@ -273,4 +293,5 @@ copy before dropping it. Multi-read black-and-white (TIFF) pages have not been s
 5. The discovery state word `0x00800007`, the `SAV2` probe, and status word 2 versus 3.
 6. Control command 0x40 and its other opcodes.
 7. The iX100's own access-point mode (the scanner as the network).
-8. USB: the USB ID (`04C5:13F4`, from Scan) and INQUIRY over USB.
+8. USB: the scan sequence with Fujitsu's SCSI set, and what byte 4 of the hardware status (`80` on USB,
+   `00` over Wi-Fi) means.

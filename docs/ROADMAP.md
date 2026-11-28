@@ -61,8 +61,10 @@ OCR and PDF assembly; this package supplies what talks to the scanner and what t
    WINDOW, gamma and JPEG tables, OBJECT POSITION, START SCAN, READ per side). Facts from Scan's
    `FujitsuSCSIOverUSB/` and SANE's documentation; **write the code fresh**, since parts of Scan's USB layer
    are GPL-derived. Hardware JPEG gives one stream per side on the iX500.
-5. **iX100 over USB [HW]:** start from the iX500 command set without duplex and the back window; confirm
-   INQUIRY, the VPD page and resolutions on hardware.
+5. **iX100 over USB [HW]:** the transport is proven (IOUSBHost, the 31-byte command block, INQUIRY and
+   hardware status answered; see docs/PROTOCOL-iX100-WiFi.md, "Over USB"). Next: the scan itself, with
+   Fujitsu's SCSI set (the Wi-Fi vendor commands are refused over USB): start from the iX500's USB sequence
+   without duplex and the back window, read the VPD page for resolutions, and check each step on hardware.
 6. **Pairing and Wi-Fi setup over USB [HW]:** SEND DIAGNOSTIC with 16-byte ASCII commands (`CLR HOSTID
    ADATA`, `REG HOSTID DATA `, `SETUP NET …`), per open-scansnap's notes. Pairing removes every other
    computer, so the API must say so. Lets an app pair a Mac without ScanSnap Home.
